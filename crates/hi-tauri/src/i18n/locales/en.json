@@ -1,0 +1,74 @@
+{
+  "nav": {
+    "launcher": "Session Management",
+    "tasks": "Tasks",
+    "tools": "Tools",
+    "agents": "Agents",
+    "mcp": "MCP Servers",
+    "skills": "Skills",
+    "customTools": "Custom Tools",
+    "help": "Help Center",
+    "settings": "System Settings",
+    "about": "About Us"
+  },
+  "settings": {
+    "title": "System Settings",
+    "saved": "Settings saved",
+    "general": "General Settings",
+    "language": "Language",
+    "languageDesc": "Choose your preferred interface language",
+    "zhCN": "简体中文",
+    "en": "English",
+    "theme": "Theme",
+    "themeDesc": "Switch interface color style",
+    "system": "System",
+    "light": "Light",
+    "dark": "Dark",
+    "pathConfig": "Path Configuration",
+    "hiBinPath": "hi executable path",
+    "hiBinPathPlaceholder": "e.g.: /usr/local/bin/hi",
+    "hiMonitorBinPath": "hi-monitor path",
+    "hiMonitorBinPathPlaceholder": "e.g.: /usr/local/bin/hi-monitor",
+    "browse": "Browse",
+    "savePathSettings": "Save Path Settings"
+  },
+"about": {
+    "title": "hione",
+    "subtitle": "all in one ai tools",
+    "description": "The next-generation AI collaboration platform designed for developers. With a localized session engine, integrate multiple top-tier models into an ultra-smooth terminal experience.",
+    "starMe": "If you like this project, please give us a star on GitHub ⭐️",
+    "features": {
+      "privacy": {
+        "title": "Privacy-First",
+        "desc": "Data stored locally, sessions without intermediaries. Security is our foundation."
+      },
+      "speed": {
+        "title": "Millisecond Response",
+        "desc": "Rust-powered core engine delivers blazing-fast command response."
+      },
+      "multimodal": {
+        "title": "Multi-Model Collaboration",
+        "desc": "Seamlessly switch between Claude, Codex, Gemini, Opencode, Qwen in one interface."
+      },
+      "opensource": {
+        "title": "Open Source Spirit",
+        "desc": "Transparent codebase, community-driven, continuously powering productivity tools."
+      }
+    },
+    "version": "Version",
+    "versionValue": "v0.1.0 Stable",
+    "platform": "Platform",
+    "platformValue": "macOS / Windows / Linux",
+    "crafted": "Crafted with love by Aiden",
+    "est": "EST. 2026 • OPEN SOURCE INITIATIVE"
+  },
+  "help": {
+    "cliRef": "CLI Reference",
+    "alias": "Alias",
+    "usage": "Usage",
+    "flags": "Flags",
+    "flagCol": "Flag",
+    "descCol": "Description",
+    "examples": "Examples"
+  }
+}

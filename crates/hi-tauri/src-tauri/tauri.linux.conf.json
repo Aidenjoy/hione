@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "../../../target/release/hi": "cli/hi",
+      "../../../target/release/hi-monitor": "cli/hi-monitor"
+    }
+  }
+}

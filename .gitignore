@@ -1,0 +1,32 @@
+# Node.js
+node_modules/
+
+# Build outputs
+dist/
+target/
+target/coverage/
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# IDE
+.vscode/
+.claude/
+.superpowers/
+.ruff_cache/
+
+# Project runtime
+.hione/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Editor
+*.swp
+
+# (private)
+docs/

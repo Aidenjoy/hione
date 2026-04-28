@@ -1,0 +1,74 @@
+{
+  "nav": {
+    "launcher": "会话管理",
+    "tasks": "任务面板",
+    "tools": "工具管理",
+    "agents": "Agent 配置",
+    "mcp": "MCP 服务器",
+    "skills": "Skills",
+    "customTools": "自定义工具",
+    "help": "帮助中心",
+    "settings": "系统设置",
+    "about": "关于我们"
+  },
+  "settings": {
+    "title": "系统设置",
+    "saved": "设置已保存",
+    "general": "通用设置",
+    "language": "语言",
+    "languageDesc": "选择您偏好的界面语言",
+    "zhCN": "简体中文",
+    "en": "English",
+    "theme": "主题模式",
+    "themeDesc": "切换界面色彩风格",
+    "system": "系统",
+    "light": "浅色",
+    "dark": "深色",
+    "pathConfig": "路径配置",
+    "hiBinPath": "hi 可执行文件路径",
+    "hiBinPathPlaceholder": "例如: /usr/local/bin/hi",
+    "hiMonitorBinPath": "hi-monitor 路径",
+    "hiMonitorBinPathPlaceholder": "例如: /usr/local/bin/hi-monitor",
+    "browse": "浏览",
+    "savePathSettings": "保存路径设置"
+  },
+"about": {
+    "title": "hione",
+    "subtitle": "all in one ai tools",
+    "description": "专为开发者设计的下一代 AI 协作平台。通过本地化的会话引擎，将多种顶级模型整合进极致流畅的终端体验中。",
+    "starMe": "如果您喜欢这个项目，请在 GitHub 上为我们点亮一颗星 ⭐️",
+    "features": {
+      "privacy": {
+        "title": "隐私原生",
+        "desc": "数据本地存储，会话不经中转，安全是我们的底线。"
+      },
+      "speed": {
+        "title": "毫秒级响应",
+        "desc": "基于 Rust 构建的 Core 引擎，带来极致的指令响应速度。"
+      },
+      "multimodal": {
+        "title": "多模态协作",
+        "desc": "在一个界面内无缝切换 Claude, Codex, Gemini, Opencode, Qwen。"
+      },
+      "opensource": {
+        "title": "开源精神",
+        "desc": "透明的代码库，由社区驱动，为效率工具持续注入动力。"
+      }
+    },
+    "version": "版本",
+    "versionValue": "v0.1.0 稳定版",
+    "platform": "平台",
+    "platformValue": "macOS / Windows / Linux",
+    "crafted": "由 Aiden 倾心打造",
+    "est": "创建于 2026 • 开源倡议"
+  },
+  "help": {
+    "cliRef": "命令行参考",
+    "alias": "别名",
+    "usage": "使用方法",
+    "flags": "参数说明",
+    "flagCol": "参数",
+    "descCol": "说明",
+    "examples": "示例代码"
+  }
+}

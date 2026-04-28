@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "../../../target/release/hi.exe": "cli/hi.exe",
+      "../../../target/release/hi-monitor.exe": "cli/hi-monitor.exe"
+    }
+  }
+}

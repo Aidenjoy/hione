@@ -1,0 +1,257 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            arch: arm64
+          - os: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: crates/hi-tauri/package-lock.json
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked
+
+      - name: Build frontend
+        run: cd crates/hi-tauri && npm ci && npm run build
+
+      - name: Build CLI binaries
+        run: cargo build --release -p hi-cli -p hi-monitor
+
+      - name: Build Tauri desktop app
+        run: cd crates/hi-tauri && cargo tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Package release archive
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          ARCH="${{ matrix.arch }}"
+          ARCHIVE="hione-${VERSION}-macos-${ARCH}"
+          mkdir -p "${ARCHIVE}"
+          
+          cp target/release/hi "${ARCHIVE}/"
+          cp target/release/hi-monitor "${ARCHIVE}/"
+          chmod +x "${ARCHIVE}/hi" "${ARCHIVE}/hi-monitor"
+          
+          APP_PATH=$(find target/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
+          cp -r "${APP_PATH}" "${ARCHIVE}/HiOne.app"
+          
+          cat > "${ARCHIVE}/install.sh" << 'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          PREFIX="${PREFIX:-$HOME/.local/bin}"
+          mkdir -p "$PREFIX"
+          echo "Installing HiOne.app to /Applications..."
+          cp -rf "$DIR/HiOne.app" /Applications/HiOne.app
+          echo "Installing CLI tools to $PREFIX..."
+          cp -f "$DIR/hi" "$PREFIX/hi"
+          cp -f "$DIR/hi-monitor" "$PREFIX/hi-monitor"
+          chmod +x "$PREFIX/hi" "$PREFIX/hi-monitor"
+          if ! echo "$PATH" | grep -qE "(^|:)$PREFIX(:|$)"; then
+            echo "⚠️  Add to PATH: export PATH=\"$PREFIX:\$PATH\""
+          fi
+          echo "✓ Done. Run: hi --help"
+          EOF
+          chmod +x "${ARCHIVE}/install.sh"
+          
+          tar -czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hione-macos-${{ matrix.arch }}
+          path: hione-*.tar.gz
+
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: crates/hi-tauri/package-lock.json
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked
+
+      - name: Build frontend
+        run: cd crates/hi-tauri && npm ci && npm run build
+
+      - name: Build CLI binaries
+        run: cargo build --release -p hi-cli -p hi-monitor
+
+      - name: Build Tauri desktop app
+        run: cd crates/hi-tauri && cargo tauri build --bundles appimage,deb
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Package release archive
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          ARCHIVE="hione-${VERSION}-linux-x86_64"
+          mkdir -p "${ARCHIVE}"
+          
+          cp target/release/hi "${ARCHIVE}/"
+          cp target/release/hi-monitor "${ARCHIVE}/"
+          chmod +x "${ARCHIVE}/hi" "${ARCHIVE}/hi-monitor"
+          
+          APPIMAGE=$(find target/release/bundle/appimage -name "*.AppImage" | head -1)
+          cp "${APPIMAGE}" "${ARCHIVE}/HiOne.AppImage"
+          chmod +x "${ARCHIVE}/HiOne.AppImage"
+          
+          cat > "${ARCHIVE}/install.sh" << 'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          PREFIX="${PREFIX:-$HOME/.local/bin}"
+          mkdir -p "$PREFIX"
+          echo "Installing CLI tools to $PREFIX..."
+          cp -f "$DIR/hi" "$PREFIX/hi"
+          cp -f "$DIR/hi-monitor" "$PREFIX/hi-monitor"
+          chmod +x "$PREFIX/hi" "$PREFIX/hi-monitor"
+          echo "Installing HiOne desktop app..."
+          cp -f "$DIR/HiOne.AppImage" "$PREFIX/hi-tauri"
+          chmod +x "$PREFIX/hi-tauri"
+          if ! echo "$PATH" | grep -qE "(^|:)$PREFIX(:|$)"; then
+            echo "⚠️  Add to PATH: export PATH=\"$PREFIX:\$PATH\""
+          fi
+          echo "✓ Done. Run: hi --help"
+          EOF
+          chmod +x "${ARCHIVE}/install.sh"
+          
+          tar -czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hione-linux-x86_64
+          path: hione-*.tar.gz
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: crates/hi-tauri/package-lock.json
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli --locked
+
+      - name: Build frontend
+        run: cd crates/hi-tauri && npm ci && npm run build
+
+      - name: Build CLI binaries
+        run: cargo build --release -p hi-cli -p hi-monitor
+
+      - name: Build Tauri desktop app
+        run: cd crates/hi-tauri && cargo tauri build --bundles nsis,msi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Package release archive
+        shell: pwsh
+        run: |
+          $VERSION = $env:GITHUB_REF_NAME
+          $ARCHIVE = "hione-$VERSION-windows-x86_64"
+          New-Item -ItemType Directory -Path $ARCHIVE | Out-Null
+
+          Copy-Item "target\release\hi.exe" "$ARCHIVE\"
+          Copy-Item "target\release\hi-monitor.exe" "$ARCHIVE\"
+
+          $Nsis = Get-ChildItem "target\release\bundle\nsis" -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $Msi  = Get-ChildItem "target\release\bundle\msi"  -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($Nsis) { Copy-Item $Nsis.FullName "$ARCHIVE\HiOne-Setup.exe" }
+          if ($Msi)  { Copy-Item $Msi.FullName  "$ARCHIVE\HiOne-Setup.msi" }
+
+          $installScript = @'
+          #Requires -Version 5.1
+          param([string]$Prefix = "")
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+          if (-not $Prefix) { $Prefix = Join-Path $env:LOCALAPPDATA "hione\bin" }
+          New-Item -ItemType Directory -Path $Prefix -Force | Out-Null
+
+          Write-Host "Installing CLI tools to $Prefix..."
+          Copy-Item "$ScriptDir\hi.exe" "$Prefix\hi.exe" -Force
+          Copy-Item "$ScriptDir\hi-monitor.exe" "$Prefix\hi-monitor.exe" -Force
+
+          Write-Host "Running HiOne desktop installer..."
+          $setup = Get-ChildItem $ScriptDir -Filter "HiOne-Setup.*" | Select-Object -First 1
+          if ($setup) { Start-Process $setup.FullName -Wait }
+
+          $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+          if ($currentPath -notlike "*$Prefix*") {
+              [Environment]::SetEnvironmentVariable("PATH", "$Prefix;$currentPath", "User")
+              Write-Host "Added $Prefix to User PATH (restart terminal to take effect)"
+          }
+          Write-Host "Done. Run: hi --help"
+          '@
+          $installScript | Set-Content "$ARCHIVE\install.ps1" -Encoding UTF8
+
+          Compress-Archive -Path $ARCHIVE -DestinationPath "$ARCHIVE.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hione-windows-x86_64
+          path: hione-*.zip
+
+  release:
+    needs: [build-macos, build-linux, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            hione-macos-arm64/*.tar.gz
+            hione-macos-x86_64/*.tar.gz
+            hione-linux-x86_64/*.tar.gz
+            hione-windows-x86_64/*.zip
+          generate_release_notes: true
+          draft: false
+          fail_on_unmatched_files: true

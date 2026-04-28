@@ -16,11 +16,15 @@ pub struct KnownTool {
 
 pub const KNOWN_TOOLS: &[KnownTool] = &[
     KnownTool {
-        name: "tmux",
-        bin_name: "tmux",
-        install_cmd: if cfg!(target_os = "macos") { "brew install tmux" } else { "sudo apt install -y tmux" },
-        uninstall_cmd: if cfg!(target_os = "macos") { "brew uninstall tmux" } else { "sudo apt remove -y tmux" },
-        version_cmd: "tmux -V",
+        name:        if cfg!(windows) { "psmux" } else { "tmux" },
+        bin_name:    if cfg!(windows) { "psmux" } else { "tmux" },
+        install_cmd: if cfg!(target_os = "macos") { "brew install tmux" }
+                     else if cfg!(windows)         { "npm install -g psmux" }
+                     else                          { "sudo apt install -y tmux" },
+        uninstall_cmd: if cfg!(target_os = "macos") { "brew uninstall tmux" }
+                       else if cfg!(windows)         { "npm uninstall -g psmux" }
+                       else                          { "sudo apt remove -y tmux" },
+        version_cmd: if cfg!(windows) { "psmux --version" } else { "tmux -V" },
     },
     KnownTool {
         name: "claude",
@@ -211,46 +215,80 @@ fn find_binary(name: &str) -> Option<std::path::PathBuf> {
         return Some(path);
     }
 
-    let home = std::env::var("HOME").ok()?;
-    let common_paths = [
-        "/usr/local/bin",
-        "/usr/bin",
-        "/bin",
-        "/usr/sbin",
-        "/sbin",
-        "/opt/homebrew/bin",
-        &format!("{}/.local/bin", home),
-        &format!("{}/.cargo/bin", home),
-        &format!("{}/.npm-global/bin", home),
-    ];
-
-    for path in common_paths {
-        let full_path = std::path::Path::new(path).join(name);
-        if full_path.exists() {
-            return Some(full_path);
+    // Windows: check npm global dir (%APPDATA%\npm) and use `where` for fresh PATH lookup.
+    // Must come before the Unix HOME block because HOME is not set on Windows.
+    #[cfg(windows)]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let npm_dir = std::path::PathBuf::from(&appdata).join("npm");
+            for ext in &["", ".cmd", ".ps1", ".exe"] {
+                let p = npm_dir.join(format!("{}{}", name, ext));
+                if p.exists() {
+                    return Some(p);
+                }
+            }
         }
+        // `cmd /C where` resolves the current system PATH, bypassing the stale process PATH.
+        if let Ok(out) = Command::new("cmd").args(["/C", &format!("where {}", name)]).output() {
+            if out.status.success() {
+                let first = String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if !first.is_empty() {
+                    return Some(std::path::PathBuf::from(first));
+                }
+            }
+        }
+        return None;
     }
 
-    if let Some(p) = nvm_bin_path(&home, name) {
-        return Some(p);
-    }
+    // Unix-only paths below
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var("HOME").ok()?;
+        let common_paths = [
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+            "/opt/homebrew/bin",
+            &format!("{}/.local/bin", home),
+            &format!("{}/.cargo/bin", home),
+            &format!("{}/.npm-global/bin", home),
+        ];
 
-    if let Some(p) = fnm_bin_path(&home, name) {
-        return Some(p);
-    }
+        for path in common_paths {
+            let full_path = std::path::Path::new(path).join(name);
+            if full_path.exists() {
+                return Some(full_path);
+            }
+        }
 
-    let volta = std::path::PathBuf::from(format!("{}/.volta/bin/{}", home, name));
-    if volta.exists() {
-        return Some(volta);
-    }
-
-    if let Some(p) = which_via_shell(name) {
-        if p.exists() {
+        if let Some(p) = nvm_bin_path(&home, name) {
             return Some(p);
         }
-    }
 
-    None
+        if let Some(p) = fnm_bin_path(&home, name) {
+            return Some(p);
+        }
+
+        let volta = std::path::PathBuf::from(format!("{}/.volta/bin/{}", home, name));
+        if volta.exists() {
+            return Some(volta);
+        }
+
+        if let Some(p) = which_via_shell(name) {
+            if p.exists() {
+                return Some(p);
+            }
+        }
+
+        None
+    }
 }
 
 fn companion_npm(tool_bin_name: &str) -> Option<std::path::PathBuf> {
@@ -468,31 +506,14 @@ pub async fn install_tool_async(name: String, window: Window) -> Result<(), AppE
             .spawn()?
     };
 
-    // On Windows: run inside WSL if available, otherwise native cmd
+    // Windows: install natively via cmd
     #[cfg(windows)]
-    let mut child = if is_wsl_available() {
-        // WSL path: use raw install_cmd directly (WSL has its own npm/node)
-        Command::new("wsl")
-            .args(["--", "bash", "-ic", cmd_str])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?
-    } else {
-        let resolved_cmd = if cmd_str.starts_with("npm install") {
-            match companion_npm(tool.bin_name) {
-                Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
-                None => resolve_cmd(cmd_str),
-            }
-        } else {
-            resolve_cmd(cmd_str)
-        };
-        Command::new("cmd")
-            .args(["/C", &resolved_cmd])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?
-    };
-    
+    let mut child = Command::new("cmd")
+        .args(["/C", cmd_str])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
     if let Some(stdout) = child.stdout.take() {
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
@@ -571,30 +592,14 @@ pub async fn uninstall_tool_async(name: String, window: Window) -> Result<(), Ap
             .spawn()?
     };
 
-    // On Windows: run inside WSL if available, otherwise native cmd
+    // Windows: uninstall natively via cmd
     #[cfg(windows)]
-    let mut child = if is_wsl_available() {
-        Command::new("wsl")
-            .args(["--", "bash", "-ic", cmd_str])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?
-    } else {
-        let resolved_cmd = if cmd_str.starts_with("npm uninstall") {
-            match companion_npm(tool.bin_name) {
-                Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
-                None => resolve_cmd(cmd_str),
-            }
-        } else {
-            resolve_cmd(cmd_str)
-        };
-        Command::new("cmd")
-            .args(["/C", &resolved_cmd])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?
-    };
-    
+    let mut child = Command::new("cmd")
+        .args(["/C", cmd_str])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
     if let Some(stdout) = child.stdout.take() {
         let reader = BufReader::new(stdout);
         for line in reader.lines() {

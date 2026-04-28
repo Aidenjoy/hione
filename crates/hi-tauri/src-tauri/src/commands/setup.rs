@@ -78,13 +78,17 @@ pub async fn check_setup() -> Result<SetupStatus, String> {
 #[tauri::command]
 pub async fn install_dependency(name: String, window: Window) -> Result<(), String> {
     let cmd_str = match name.as_str() {
-        "tmux" => {
+        // On Windows the multiplexer is psmux (Windows-native), not tmux.
+        // The setup page may still emit "tmux" as the key; redirect to psmux install.
+        "tmux" | "psmux" => {
             #[cfg(target_os = "macos")]
             { "brew install tmux" }
-            #[cfg(any(target_os = "linux", windows))]
+            #[cfg(target_os = "linux")]
             { "sudo apt install -y tmux" }
+            #[cfg(windows)]
+            { "npm install -g psmux" }
             #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
-            { return Err("tmux installation not supported on this platform".to_string()); }
+            { return Err("tmux/psmux installation not supported on this platform".to_string()); }
         }
         "node" => {
             "curl -fsSL https://fnm.vercel.app/install | bash && source ~/.bashrc && fnm install 20 && fnm use 20"
@@ -104,23 +108,13 @@ pub async fn install_dependency(name: String, window: Window) -> Result<(), Stri
         .spawn()
         .map_err(|e| e.to_string())?;
 
-    // On Windows: prefer WSL, fall back to cmd
     #[cfg(windows)]
-    let mut child = if wsl_has("bash") {
-        std::process::Command::new("wsl")
-            .args(["--", "bash", "-ic", cmd_str])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| e.to_string())?
-    } else {
-        std::process::Command::new("cmd")
-            .args(["/C", cmd_str])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| e.to_string())?
-    };
+    let mut child = std::process::Command::new("cmd")
+        .args(["/C", cmd_str])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
     
     use std::io::{BufRead, BufReader};
     

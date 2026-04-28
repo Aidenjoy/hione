@@ -71,12 +71,27 @@ sudo dnf install tmux
 | Node.js | 20+ | 前端构建（仅 Tauri 桌面版需要）|
 
 ```bash
-# 安装 Rust
+# 安装 Rust (macOS / Linux)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # 安装 Node.js（通过 fnm）
 curl -fsSL https://fnm.vercel.app/install | bash
 fnm install 20 && fnm use 20
+```
+
+Windows：
+
+```powershell
+# 安装 Rust
+winget install Rustlang.Rustup
+
+# 安装 Node.js
+winget install OpenJS.NodeJS.LTS
+
+# 安装后重启 PowerShell，然后验证：
+rustc --version
+cargo --version
+node --version
 ```
 
 ## 安装
@@ -93,7 +108,7 @@ fnm install 20 && fnm use 20
 
 ### 方式二 — 从源码构建 (CLI + 桌面版)
 
-若需同时构建 CLI 工具和桌面应用程序：
+#### 使用安装脚本（推荐）
 
 ```bash
 git clone https://github.com/your-org/hi.git
@@ -108,6 +123,38 @@ pwsh scripts/install.ps1 -WithDesktop
 ```
 
 `--with-desktop` 标志会触发 Tauri 构建流程，并将桌面版应用与 `hi` CLI 一并安装。
+
+#### 手动构建
+
+```bash
+git clone https://github.com/your-org/hi.git
+cd hione
+
+# 1. 安装 tauri-cli（cargo tauri build 必需）
+cargo install tauri-cli --locked
+
+# 2. 安装前端依赖（仅首次需要）
+cd crates/hi-tauri && npm install && cd ../..
+
+# 3. 构建桌面应用（beforeBuildCommand 自动构建 CLI 和前端）
+cargo tauri build
+```
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/your-org/hi.git
+cd hione
+
+# 1. 安装 tauri-cli
+cargo install tauri-cli --locked
+
+# 2. 安装前端依赖
+cd crates\hi-tauri; npm install; cd ..\..
+
+# 3. 构建桌面应用
+cargo tauri build
+```
 
 ## 桌面端应用使用
 

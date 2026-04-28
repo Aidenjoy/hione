@@ -71,12 +71,27 @@ Download a pre-built release from the [Releases page](https://github.com/your-or
 | Node.js | 20+ | Frontend build (Tauri desktop only) |
 
 ```bash
-# Install Rust
+# Install Rust (macOS / Linux)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Install Node.js (via fnm)
 curl -fsSL https://fnm.vercel.app/install | bash
 fnm install 20 && fnm use 20
+```
+
+On Windows:
+
+```powershell
+# Install Rust
+winget install Rustlang.Rustup
+
+# Install Node.js
+winget install OpenJS.NodeJS.LTS
+
+# Restart PowerShell after installation, then verify:
+rustc --version
+cargo --version
+node --version
 ```
 
 ## Installation
@@ -93,7 +108,7 @@ Go to [Releases](https://github.com/your-org/hi/releases) and download:
 
 ### Option B — Build from source (CLI + Desktop)
 
-To build both the CLI and the Desktop application:
+#### Using install script (recommended)
 
 ```bash
 git clone https://github.com/your-org/hi.git
@@ -108,6 +123,38 @@ pwsh scripts/install.ps1 -WithDesktop
 ```
 
 The `--with-desktop` flag will build the Tauri application and install it alongside the `hi` CLI.
+
+#### Manual build
+
+```bash
+git clone https://github.com/your-org/hi.git
+cd hione
+
+# 1. Install tauri-cli (required for cargo tauri build)
+cargo install tauri-cli --locked
+
+# 2. Install frontend dependencies (first time only)
+cd crates/hi-tauri && npm install && cd ../..
+
+# 3. Build desktop app (beforeBuildCommand handles CLI + frontend)
+cargo tauri build
+```
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/your-org/hi.git
+cd hione
+
+# 1. Install tauri-cli
+cargo install tauri-cli --locked
+
+# 2. Install frontend dependencies
+cd crates\hi-tauri; npm install; cd ..\..
+
+# 3. Build desktop app
+cargo tauri build
+```
 
 ## Desktop Application Usage
 

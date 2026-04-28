@@ -308,64 +308,99 @@ fn resolve_cmd(cmd_str: &str) -> String {
     cmd_str.to_string()
 }
 
+/// Check if WSL is available on this Windows machine.
+#[cfg(windows)]
+pub fn is_wsl_available() -> bool {
+    Command::new("wsl")
+        .args(["--", "echo", "ok"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn parse_version_from_output(stdout: &[u8], stderr: &[u8]) -> Option<String> {
+    let v = String::from_utf8_lossy(stdout).trim().to_string();
+    let v = if v.is_empty() {
+        String::from_utf8_lossy(stderr).trim().to_string()
+    } else {
+        v
+    };
+    if v.is_empty() {
+        None
+    } else {
+        Some(v.trim_start_matches('v').to_string())
+    }
+}
+
 pub fn detect_tool(name: &str) -> (bool, Option<String>) {
     let tool = KNOWN_TOOLS.iter().find(|t| t.name == name);
-    
+
     if tool.is_none() {
         return (false, None);
     }
-    
-    let tool = tool.unwrap();
-    let bin_path = find_binary(tool.bin_name);
-    
-    if bin_path.is_none() {
-        return (false, None);
-    }
-    
-    let bin_path = bin_path.unwrap();
-    let bin_path_str = bin_path.to_string_lossy();
-    
-    // Use the version_cmd but replace the binary name with its absolute path if it matches
-    let cmd_to_run = tool.version_cmd.replace(tool.bin_name, &bin_path_str);
-    
-    #[cfg(target_os = "macos")]
-    let output = Command::new("zsh")
-        .args(["-i", "-l", "-c", &cmd_to_run])
-        .output()
-        .or_else(|_| {
-            Command::new("sh")
-                .args(["-i", "-l", "-c", &cmd_to_run])
-                .output()
-        });
 
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let output = Command::new("sh")
-        .args(["-i", "-l", "-c", &cmd_to_run])
-        .output();
-    
+    let tool = tool.unwrap();
+
+    // On Windows: check WSL first, fall back to native
     #[cfg(windows)]
-    let output = Command::new("cmd")
-        .args(["/C", &cmd_to_run])
-        .output();
-    
-    let version = output.ok().and_then(|o| {
-        let v = String::from_utf8_lossy(&o.stdout).trim().to_string();
-        let v = if v.is_empty() {
-            String::from_utf8_lossy(&o.stderr).trim().to_string()
-        } else {
-            v
-        };
-        
-        if v.is_empty() {
-            None
-        } else {
-            // Basic cleanup: remove leading 'v' and trim
-            let cleaned = v.trim_start_matches('v').to_string();
-            Some(cleaned)
+    {
+        if is_wsl_available() {
+            let wsl_check = Command::new("wsl")
+                .args(["--", "which", tool.bin_name])
+                .output();
+            if let Ok(out) = wsl_check {
+                if out.status.success() {
+                    let version = Command::new("wsl")
+                        .args(["--", "bash", "-ic", tool.version_cmd])
+                        .output()
+                        .ok()
+                        .and_then(|o| parse_version_from_output(&o.stdout, &o.stderr));
+                    return (true, version);
+                }
+            }
         }
-    });
-    
-    (true, version)
+        // Fall back to native Windows detection
+        let bin_path = match find_binary(tool.bin_name) {
+            Some(p) => p,
+            None => return (false, None),
+        };
+        let cmd_to_run = tool.version_cmd.replace(tool.bin_name, &bin_path.to_string_lossy());
+        let version = Command::new("cmd")
+            .args(["/C", &cmd_to_run])
+            .output()
+            .ok()
+            .and_then(|o| parse_version_from_output(&o.stdout, &o.stderr));
+        return (true, version);
+    }
+
+    // Unix
+    #[cfg(not(windows))]
+    {
+        let bin_path = match find_binary(tool.bin_name) {
+            Some(p) => p,
+            None => return (false, None),
+        };
+        let cmd_to_run = tool.version_cmd.replace(tool.bin_name, &bin_path.to_string_lossy());
+
+        #[cfg(target_os = "macos")]
+        let output = Command::new("zsh")
+            .args(["-i", "-l", "-c", &cmd_to_run])
+            .output()
+            .or_else(|_| {
+                Command::new("sh")
+                    .args(["-i", "-l", "-c", &cmd_to_run])
+                    .output()
+            });
+
+        #[cfg(not(target_os = "macos"))]
+        let output = Command::new("sh")
+            .args(["-i", "-l", "-c", &cmd_to_run])
+            .output();
+
+        let version = output.ok()
+            .and_then(|o| parse_version_from_output(&o.stdout, &o.stderr));
+        (true, version)
+    }
 }
 
 pub fn detect_all_tools() -> Vec<ToolInfo> {
@@ -384,50 +419,79 @@ pub fn detect_all_tools() -> Vec<ToolInfo> {
 
 pub async fn install_tool_async(name: String, window: Window) -> Result<(), AppError> {
     let tool = KNOWN_TOOLS.iter().find(|t| t.name == name);
-    
+
     if tool.is_none() {
         return Err(AppError::CommandFailed(format!("Unknown tool: {}", name)));
     }
-    
+
     let tool = tool.unwrap();
     let cmd_str = tool.install_cmd;
-    
-    let resolved_cmd = if cmd_str.starts_with("npm install") {
-        match companion_npm(tool.bin_name) {
-            Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
-            None => resolve_cmd(cmd_str),
-        }
-    } else {
-        resolve_cmd(cmd_str)
-    };
 
     #[cfg(target_os = "macos")]
-    let mut child = Command::new("zsh")
-        .args(["-i", "-l", "-c", &resolved_cmd])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .or_else(|_| {
-            Command::new("sh")
-                .args(["-i", "-l", "-c", &resolved_cmd])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-        })?;
+    let mut child = {
+        let resolved_cmd = if cmd_str.starts_with("npm install") {
+            match companion_npm(tool.bin_name) {
+                Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
+                None => resolve_cmd(cmd_str),
+            }
+        } else {
+            resolve_cmd(cmd_str)
+        };
+        Command::new("zsh")
+            .args(["-i", "-l", "-c", &resolved_cmd])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .or_else(|_| {
+                Command::new("sh")
+                    .args(["-i", "-l", "-c", &resolved_cmd])
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+            })?
+    };
 
     #[cfg(all(unix, not(target_os = "macos")))]
-    let mut child = Command::new("sh")
-        .args(["-i", "-l", "-c", &resolved_cmd])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    
+    let mut child = {
+        let resolved_cmd = if cmd_str.starts_with("npm install") {
+            match companion_npm(tool.bin_name) {
+                Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
+                None => resolve_cmd(cmd_str),
+            }
+        } else {
+            resolve_cmd(cmd_str)
+        };
+        Command::new("sh")
+            .args(["-i", "-l", "-c", &resolved_cmd])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?
+    };
+
+    // On Windows: run inside WSL if available, otherwise native cmd
     #[cfg(windows)]
-    let mut child = Command::new("cmd")
-        .args(["/C", &resolved_cmd])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut child = if is_wsl_available() {
+        // WSL path: use raw install_cmd directly (WSL has its own npm/node)
+        Command::new("wsl")
+            .args(["--", "bash", "-ic", cmd_str])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?
+    } else {
+        let resolved_cmd = if cmd_str.starts_with("npm install") {
+            match companion_npm(tool.bin_name) {
+                Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
+                None => resolve_cmd(cmd_str),
+            }
+        } else {
+            resolve_cmd(cmd_str)
+        };
+        Command::new("cmd")
+            .args(["/C", &resolved_cmd])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?
+    };
     
     if let Some(stdout) = child.stdout.take() {
         let reader = BufReader::new(stdout);
@@ -458,50 +522,78 @@ pub async fn install_tool_async(name: String, window: Window) -> Result<(), AppE
 
 pub async fn uninstall_tool_async(name: String, window: Window) -> Result<(), AppError> {
     let tool = KNOWN_TOOLS.iter().find(|t| t.name == name);
-    
+
     if tool.is_none() {
         return Err(AppError::CommandFailed(format!("Unknown tool: {}", name)));
     }
-    
+
     let tool = tool.unwrap();
     let cmd_str = tool.uninstall_cmd;
-    
-    let resolved_cmd = if cmd_str.starts_with("npm uninstall") {
-        match companion_npm(tool.bin_name) {
-            Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
-            None => resolve_cmd(cmd_str),
-        }
-    } else {
-        resolve_cmd(cmd_str)
-    };
 
     #[cfg(target_os = "macos")]
-    let mut child = Command::new("zsh")
-        .args(["-i", "-l", "-c", &resolved_cmd])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .or_else(|_| {
-            Command::new("sh")
-                .args(["-i", "-l", "-c", &resolved_cmd])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-        })?;
+    let mut child = {
+        let resolved_cmd = if cmd_str.starts_with("npm uninstall") {
+            match companion_npm(tool.bin_name) {
+                Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
+                None => resolve_cmd(cmd_str),
+            }
+        } else {
+            resolve_cmd(cmd_str)
+        };
+        Command::new("zsh")
+            .args(["-i", "-l", "-c", &resolved_cmd])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .or_else(|_| {
+                Command::new("sh")
+                    .args(["-i", "-l", "-c", &resolved_cmd])
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+            })?
+    };
 
     #[cfg(all(unix, not(target_os = "macos")))]
-    let mut child = Command::new("sh")
-        .args(["-i", "-l", "-c", &resolved_cmd])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    
+    let mut child = {
+        let resolved_cmd = if cmd_str.starts_with("npm uninstall") {
+            match companion_npm(tool.bin_name) {
+                Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
+                None => resolve_cmd(cmd_str),
+            }
+        } else {
+            resolve_cmd(cmd_str)
+        };
+        Command::new("sh")
+            .args(["-i", "-l", "-c", &resolved_cmd])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?
+    };
+
+    // On Windows: run inside WSL if available, otherwise native cmd
     #[cfg(windows)]
-    let mut child = Command::new("cmd")
-        .args(["/C", &resolved_cmd])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut child = if is_wsl_available() {
+        Command::new("wsl")
+            .args(["--", "bash", "-ic", cmd_str])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?
+    } else {
+        let resolved_cmd = if cmd_str.starts_with("npm uninstall") {
+            match companion_npm(tool.bin_name) {
+                Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
+                None => resolve_cmd(cmd_str),
+            }
+        } else {
+            resolve_cmd(cmd_str)
+        };
+        Command::new("cmd")
+            .args(["/C", &resolved_cmd])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?
+    };
     
     if let Some(stdout) = child.stdout.take() {
         let reader = BufReader::new(stdout);

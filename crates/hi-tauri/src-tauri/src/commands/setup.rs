@@ -26,26 +26,46 @@ fn get_custom_bin_paths() -> (Option<String>, Option<String>) {
     (None, None)
 }
 
+/// On Windows, check if a binary exists inside WSL.
+#[cfg(windows)]
+fn wsl_has(bin: &str) -> bool {
+    std::process::Command::new("wsl")
+        .args(["--", "which", bin])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 pub async fn check_setup() -> Result<SetupStatus, String> {
     let (hi_path, monitor_path) = get_custom_bin_paths();
-    
-    let tmux = which("tmux").is_ok();
-    let node = which("node").is_ok();
-    let rust = which("rustc").is_ok();
-    
+
+    #[cfg(windows)]
+    let (tmux, node, rust) = (
+        wsl_has("tmux") || which("tmux").is_ok(),
+        wsl_has("node") || which("node").is_ok(),
+        wsl_has("rustc") || which("rustc").is_ok(),
+    );
+
+    #[cfg(not(windows))]
+    let (tmux, node, rust) = (
+        which("tmux").is_ok(),
+        which("node").is_ok(),
+        which("rustc").is_ok(),
+    );
+
     let hi = if let Some(ref path) = hi_path {
         PathBuf::from(path).exists()
     } else {
         which("hi").is_ok()
     };
-    
+
     let hi_monitor = if let Some(ref path) = monitor_path {
         PathBuf::from(path).exists()
     } else {
         which("hi-monitor").is_ok()
     };
-    
+
     Ok(SetupStatus {
         tmux,
         node,
@@ -61,9 +81,9 @@ pub async fn install_dependency(name: String, window: Window) -> Result<(), Stri
         "tmux" => {
             #[cfg(target_os = "macos")]
             { "brew install tmux" }
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", windows))]
             { "sudo apt install -y tmux" }
-            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
             { return Err("tmux installation not supported on this platform".to_string()); }
         }
         "node" => {
@@ -83,14 +103,24 @@ pub async fn install_dependency(name: String, window: Window) -> Result<(), Stri
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| e.to_string())?;
-    
+
+    // On Windows: prefer WSL, fall back to cmd
     #[cfg(windows)]
-    let mut child = std::process::Command::new("cmd")
-        .args(["/C", cmd_str])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    let mut child = if wsl_has("bash") {
+        std::process::Command::new("wsl")
+            .args(["--", "bash", "-ic", cmd_str])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| e.to_string())?
+    } else {
+        std::process::Command::new("cmd")
+            .args(["/C", cmd_str])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| e.to_string())?
+    };
     
     use std::io::{BufRead, BufReader};
     

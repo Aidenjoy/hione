@@ -393,31 +393,42 @@ fn start_tmux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &
         let l_count = n / 2;
         let r_count = n - l_count;
 
+        // Right column: first pane from horizontal split, rest from vertical splits
         let output = Command::new("tmux")
             .args(["split-window", "-h", "-p", "50", "-P", "-F", "#{pane_id}"])
             .output()
             .context("Failed to split tmux window horizontally")?;
-        let right_col_first = String::from_utf8(output.stdout)?.trim().to_string();
-        pane_ids.push(right_col_first.clone());
-
-        let mut last_right = right_col_first.clone();
-        for _ in 2..=r_count {
+        let right_top = String::from_utf8(output.stdout)?.trim().to_string();
+        let mut right_panes = vec![right_top.clone()];
+        let mut last_right = right_top;
+        for _ in 1..r_count {
             let output = Command::new("tmux")
                 .args(["split-window", "-v", "-t", &last_right, "-P", "-F", "#{pane_id}"])
                 .output()
                 .context("Failed to split tmux window vertically in right column")?;
             last_right = String::from_utf8(output.stdout)?.trim().to_string();
-            pane_ids.push(last_right.clone());
+            right_panes.push(last_right.clone());
         }
 
+        // Left column: l_count panes created by splitting initial_pane (which gets killed)
+        let mut left_panes = Vec::new();
         let mut last_left = initial_pane_id.clone();
-        for _ in 1..=l_count {
+        for _ in 0..l_count {
             let output = Command::new("tmux")
                 .args(["split-window", "-v", "-t", &last_left, "-P", "-F", "#{pane_id}"])
                 .output()
                 .context("Failed to split tmux window vertically in left column")?;
             last_left = String::from_utf8(output.stdout)?.trim().to_string();
-            pane_ids.push(last_left.clone());
+            left_panes.push(last_left.clone());
+        }
+
+        // Interleave columns: [left[0], right[0], left[1], right[1], ...]
+        // Extra right panes (when r_count > l_count) are appended at the end.
+        // This gives the layout: 2→(L,R), 3→(L,R,R), 4→(L,R,L,R),
+        //   5→(L,R,L,R,R), 6→(L,R,L,R,L,R)
+        for i in 0..l_count.max(r_count) {
+            if i < left_panes.len()  { pane_ids.push(left_panes[i].clone()); }
+            if i < right_panes.len() { pane_ids.push(right_panes[i].clone()); }
         }
     }
 

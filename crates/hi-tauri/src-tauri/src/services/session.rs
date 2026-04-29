@@ -40,22 +40,15 @@ pub async fn launch_session(
     hi_args.push(tools.join(","));
     let hi_cmd = format!("hi {}", hi_args.join(" "));
 
-    // Windows: build a PowerShell command string.
-    // Single-quoted PS strings are literal (only '' escapes a literal quote).
-    // This is passed as a *single Rust arg* to PowerShell via Rust's argv,
-    // so there is no cmd.exe quoting layer to break things.
     #[cfg(windows)]
-    let ps_cmd = {
-        let wd  = work_dir.replace('\'', "''");
-        let cmd = hi_cmd.replace('\'', "''");
-        // psmux receives: new-session -s <name> 'hi start -T ...'
-        // The single-quoted last arg is the command psmux runs in the new session.
-        format!("Set-Location '{}'; psmux new-session -s {} '{}'", wd, session_name, cmd)
-    };
+    let shell_cmd = format!(
+        "cd /d {:?} && psmux new-session -s {} -- {}",
+        work_dir, session_name, hi_cmd
+    );
 
     #[cfg(not(windows))]
     let shell_cmd = format!(
-        "cd '{}' && tmux new-session -s '{}' '{}'",
+        "cd '{}' && tmux new-session -A -s '{}' '{}'",
         work_dir.replace('\'', "'\\''"),
         session_name,
         hi_cmd.replace('\'', "'\\''")
@@ -103,18 +96,15 @@ pub async fn launch_session(
 
     #[cfg(target_os = "windows")]
     {
-        // Pass ps_cmd as a proper Rust argv entry — no cmd.exe shell involved,
-        // so there are zero quoting-escape issues.
         let wt_available = which::which("wt").is_ok();
         if wt_available {
             Command::new("wt")
-                .args(["new-tab", "powershell", "-NoProfile", "-Command", &ps_cmd])
+                .args(["new-tab", "cmd", "/C", &shell_cmd])
                 .spawn()
                 .map_err(|e| AppError::CommandFailed(format!("无法打开终端: {}", e)))?;
         } else {
-            // Fallback: open a new PowerShell window directly
-            Command::new("powershell")
-                .args(["-NoProfile", "-Command", &ps_cmd])
+            Command::new("cmd")
+                .args(["/C", "start", "cmd", "/C", &shell_cmd])
                 .spawn()
                 .map_err(|e| AppError::CommandFailed(format!("无法打开终端: {}", e)))?;
         }

@@ -482,10 +482,21 @@ fn start_mux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &P
             .status()
             .context("Failed to set mux pane label")?;
 
-        let launch_cmd = &session.windows[i].launch_command;
+        let launch_command = &session.windows[i].launch_command;
+        // 为子窗口追加 ; exit，为主窗口追加 ; tmux kill-session，确保 AI 退出时自动清理 tmux
+        let full_launch_cmd = if i == 0 {
+            if cfg!(windows) {
+                // psmux on Windows might not support kill-session yet, use exit
+                format!("{}; exit", launch_command)
+            } else {
+                format!("{}; tmux kill-session", launch_command)
+            }
+        } else {
+            format!("{}; exit", launch_command)
+        };
 
         Command::new(mux)
-            .args(["send-keys", "-t", pane_id, launch_cmd, "Enter"])
+            .args(["send-keys", "-t", pane_id, &full_launch_cmd, "Enter"])
             .status()
             .context("Failed to send keys to mux pane")?;
 

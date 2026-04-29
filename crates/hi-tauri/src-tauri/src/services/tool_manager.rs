@@ -393,7 +393,7 @@ pub fn detect_tool(name: &str) -> (bool, Option<String>) {
             if let Ok(out) = wsl_check {
                 if out.status.success() {
                     let version = Command::new("wsl")
-                        .args(["--", "bash", "-ic", tool.version_cmd])
+                        .args(["--", "bash", "-c", tool.version_cmd])
                         .output()
                         .ok()
                         .and_then(|o| parse_version_from_output(&o.stdout, &o.stderr));
@@ -406,7 +406,8 @@ pub fn detect_tool(name: &str) -> (bool, Option<String>) {
             Some(p) => p,
             None => return (false, None),
         };
-        let cmd_to_run = tool.version_cmd.replace(tool.bin_name, &bin_path.to_string_lossy());
+        let bin_path_quoted = format!("\"{}\"", bin_path.to_string_lossy());
+        let cmd_to_run = tool.version_cmd.replace(tool.bin_name, &bin_path_quoted);
         let version = Command::new("cmd")
             .args(["/C", &cmd_to_run])
             .output()

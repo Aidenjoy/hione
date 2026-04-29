@@ -6,17 +6,35 @@ use std::{
 };
 
 pub fn load_session() -> Result<SessionInfo> {
-    let hione_dir = env::current_dir()?.join(".hione");
+    let hione_dir = find_hione_dir()?;
     load_session_from(&hione_dir)
 }
 
 pub fn load_session_from(hione_dir: &Path) -> Result<SessionInfo> {
     let json = fs::read_to_string(hione_dir.join("session.json"))
-        .context(".hione/session.json not found — did you run `hi start`?")?;
+        .context(format!(
+            ".hione/session.json not found in {} or parents — did you run `hi start`?",
+            env::current_dir()?.display()
+        ))?;
     Ok(serde_json::from_str(&json)?)
 }
 
 pub fn hione_dir() -> Result<PathBuf> {
+    find_hione_dir()
+}
+
+pub fn find_hione_dir() -> Result<PathBuf> {
+    let mut curr = env::current_dir()?;
+    loop {
+        let hione = curr.join(".hione");
+        if hione.is_dir() {
+            return Ok(hione);
+        }
+        if !curr.pop() {
+            break;
+        }
+    }
+    // 如果没找到，回退到当前目录，让后续 load_session_from 抛出包含详细信息的 context 错误
     Ok(env::current_dir()?.join(".hione"))
 }
 
@@ -45,16 +63,24 @@ pub async fn send_to_monitor(socket_path: &str, msg: &Message) -> Result<()> {
 }
 
 fn is_stale_socket_error(e: &anyhow::Error) -> bool {
-    let s = e.to_string();
-    // ECONNREFUSED (61 macOS / 111 Linux) = socket exists but nobody listening
-    // ENOENT      (2)                     = socket file gone entirely
-    // Windows named pipe not found        = OS error 2 on pipe connect
-    s.contains("os error 61")   // ECONNREFUSED macOS
-        || s.contains("os error 111") // ECONNREFUSED Linux
-        || s.contains("os error 2")   // ENOENT / pipe not found
-        || s.contains("Connection refused")
-        || s.contains("No such file or directory")
-        || s.contains("named pipe")
+    // anyhow::Error::to_string() only returns the top-level context.
+    // We need to check the full error chain to find the underlying OS error.
+    for cause in e.chain() {
+        let s = cause.to_string();
+        // ECONNREFUSED (61 macOS / 111 Linux) = socket exists but nobody listening
+        // ENOENT      (2)                     = socket file gone entirely
+        // Windows named pipe not found        = OS error 2 on pipe connect
+        if s.contains("os error 61")   // ECONNREFUSED macOS
+            || s.contains("os error 111") // ECONNREFUSED Linux
+            || s.contains("os error 2")   // ENOENT / pipe not found
+            || s.contains("Connection refused")
+            || s.contains("No such file or directory")
+            || s.contains("named pipe")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 async fn restart_monitor(socket_path: &str) -> Result<()> {

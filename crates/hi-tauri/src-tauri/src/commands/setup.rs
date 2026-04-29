@@ -86,7 +86,7 @@ pub async fn install_dependency(name: String, window: Window) -> Result<(), Stri
             #[cfg(target_os = "linux")]
             { "sudo apt install -y tmux" }
             #[cfg(windows)]
-            { "cargo install psmux" }
+            { "winget install psmux" }
             #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
             { return Err("tmux/psmux installation not supported on this platform".to_string()); }
         }

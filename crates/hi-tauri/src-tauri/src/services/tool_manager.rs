@@ -23,10 +23,10 @@ pub const KNOWN_TOOLS: &[KnownTool] = &[
         name:        if cfg!(windows) { "psmux" } else { "tmux" },
         bin_name:    if cfg!(windows) { "psmux" } else { "tmux" },
         install_cmd: if cfg!(target_os = "macos") { "brew install tmux" }
-                     else if cfg!(windows)         { "cargo install psmux" }
+                     else if cfg!(windows)         { "winget install psmux" }
                      else                          { "sudo apt install -y tmux" },
         uninstall_cmd: if cfg!(target_os = "macos") { "brew uninstall tmux" }
-                       else if cfg!(windows)         { "cargo uninstall psmux" }
+                       else if cfg!(windows)         { "winget uninstall psmux" }
                        else                          { "sudo apt remove -y tmux" },
         version_cmd: if cfg!(windows) { "psmux --version" } else { "tmux -V" },
     },

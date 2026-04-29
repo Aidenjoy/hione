@@ -40,12 +40,6 @@ pub async fn launch_session(
     hi_args.push(tools.join(","));
     let hi_cmd = format!("hi {}", hi_args.join(" "));
 
-    #[cfg(windows)]
-    let shell_cmd = format!(
-        "cd /d {:?} && psmux new-session -s {} -- {}",
-        work_dir, session_name, hi_cmd
-    );
-
     #[cfg(not(windows))]
     let shell_cmd = format!(
         "cd '{}' && tmux new-session -A -s '{}' '{}'",
@@ -97,14 +91,19 @@ pub async fn launch_session(
     #[cfg(windows)]
     {
         let wt_available = which::which("wt").is_ok();
+        // Simple command without complex quoting issues
+        let ps_cmd = format!("cd {}; psmux new-session -s {} -- {}", work_dir, session_name, hi_cmd);
+
         if wt_available {
+            // Windows Terminal: directly run powershell with the command
             Command::new("wt")
-                .args(["new-tab", "powershell", "-Command", &shell_cmd])
+                .args(["powershell", "-NoExit", "-Command", &ps_cmd])
                 .spawn()
                 .map_err(|e| AppError::CommandFailed(format!("无法打开终端: {}", e)))?;
         } else {
+            // Fallback: Start-Process to launch a new PowerShell window
             Command::new("powershell")
-                .args(["-Command", &format!("Start-Process powershell -ArgumentList '-Command,{}'", shell_cmd)])
+                .args(["-Command", &format!("Start-Process powershell -ArgumentList '-NoExit','-Command','{}'", ps_cmd)])
                 .spawn()
                 .map_err(|e| AppError::CommandFailed(format!("无法打开终端: {}", e)))?;
         }

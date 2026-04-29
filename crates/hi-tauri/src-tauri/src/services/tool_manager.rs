@@ -475,7 +475,7 @@ pub async fn install_tool_async(name: String, window: Window) -> Result<(), AppE
     {
         let cmd_str = tool.install_cmd;
         Command::new("powershell")
-            .args(["-Command", &format!("Start-Process powershell -ArgumentList '-NoExit,-Command,{}'", cmd_str)])
+            .args(["-Command", &format!("Start-Process powershell -ArgumentList '-NoExit','-Command','{}'", cmd_str)])
             .spawn()?;
 
         let _ = window.emit("tool://install-log", json!({
@@ -574,7 +574,7 @@ pub async fn uninstall_tool_async(name: String, window: Window) -> Result<(), Ap
     {
         let cmd_str = tool.uninstall_cmd;
         Command::new("powershell")
-            .args(["-Command", &format!("Start-Process powershell -ArgumentList '-NoExit,-Command,{}'", cmd_str)])
+            .args(["-Command", &format!("Start-Process powershell -ArgumentList '-NoExit','-Command','{}'", cmd_str)])
             .spawn()?;
 
         let _ = window.emit("tool://uninstall-log", json!({

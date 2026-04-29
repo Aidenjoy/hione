@@ -67,9 +67,9 @@ fn build_launch_command_with_hione(name: &str, auto_mode: bool, resume_mode: boo
         let with_resume = build_single_cmd(name, auto_mode, true, hione_dir);
         let without_resume = build_single_cmd(name, auto_mode, false, hione_dir);
         if with_resume != without_resume {
-            // Windows PowerShell doesn't support || operator, wrap in cmd.exe
+            // PowerShell doesn't support || operator, use $? to check last command success
             if cfg!(windows) {
-                format!("cmd /C \"{} || {}\"", with_resume, without_resume)
+                format!("{}; if (-not $?) {{ {} }}", with_resume, without_resume)
             } else {
                 format!("{} || {}", with_resume, without_resume)
             }
@@ -609,7 +609,7 @@ mod tests {
         // Helper to get expected fallback syntax based on platform
         let fallback = |with: &str, without: &str| -> String {
             if cfg!(windows) {
-                format!("cmd /C \"{} || {}\"", with, without)
+                format!("{}; if (-not $?) {{ {} }}", with, without)
             } else {
                 format!("{} || {}", with, without)
             }
@@ -672,7 +672,7 @@ mod tests {
         );
         // Resume fallback uses platform-specific syntax
         let expected_resume = if cfg!(windows) {
-            "cmd /C \"ccg --continue || ccg\""
+            "ccg --continue; if (-not $?) { ccg }"
         } else {
             "ccg --continue || ccg"
         };
@@ -681,7 +681,7 @@ mod tests {
             expected_resume
         );
         let expected_resume_auto = if cfg!(windows) {
-            "cmd /C \"ccg --dangerously-skip-permissions --continue || ccg --dangerously-skip-permissions\""
+            "ccg --dangerously-skip-permissions --continue; if (-not $?) { ccg --dangerously-skip-permissions }"
         } else {
             "ccg --dangerously-skip-permissions --continue || ccg --dangerously-skip-permissions"
         };

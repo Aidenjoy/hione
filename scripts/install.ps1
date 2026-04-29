@@ -53,7 +53,7 @@ Hi 安装脚本 (Windows PowerShell)
     pwsh scripts/install.ps1 [-Options]
 
 选项:
-    -Prefix <dir>        自定义安装目录 (默认: $env:LOCALAPPDATA\hi\bin)
+    -Prefix <dir>        自定义安装目录 (默认: $env:LOCALAPPDATA\hione\bin)
     -SkipFrontend        跳过 npm install + npm run build
                          (适用于开发者快速重装)
     -WithDesktop         额外构建 Tauri 桌面应用包
@@ -78,7 +78,7 @@ Hi 安装脚本 (Windows PowerShell)
     - Node.js >= 20      https://nodejs.org
 
 安装后请确保安装目录在 PATH 中:
-    $env:PATH = "$env:LOCALAPPDATA\hi\bin;$env:PATH"
+    $env:PATH = "$env:LOCALAPPDATA\hione\bin;$env:PATH"
 "@
     Write-Host $HelpText
 }
@@ -176,11 +176,11 @@ function Build-Desktop {
     if (-not $WithDesktop) {
         return
     }
-    
+
     Log-Step 'Building Tauri desktop application...'
-    
+
     cargo tauri build
-    
+
     Log-Info 'Desktop application built'
     Log-Info 'Bundle location: crates\hi-tauri\src-tauri\target\release\bundle\'
 }

@@ -50,7 +50,7 @@ Hi 卸载脚本
     pwsh scripts/uninstall.ps1 [-Options]
 
 选项:
-    -Prefix <dir>    自定义安装目录 (默认: $env:LOCALAPPDATA\hi\bin)
+    -Prefix <dir>    自定义安装目录 (默认: $env:LOCALAPPDATA\hione\bin)
     -Purge           删除 $env:USERPROFILE\.hione 目录 (用户主目录下的全局设置)
     -Help            打印此帮助信息
 
@@ -72,7 +72,7 @@ function Stop-RunningProcesses {
 
     $Processes = @('hi', 'hi-monitor', 'hi-tauri')
 
-    foreach ($Proc in $processes) {
+foreach ($Proc in $Processes) {
         $running = Get-Process -Name $Proc -ErrorAction SilentlyContinue
         if ($running) {
             Log-Info "Stopping $Proc process..."

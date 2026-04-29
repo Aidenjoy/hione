@@ -9,14 +9,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$DefaultPrefix = Join-Path $env:LOCALAPPDATA 'hi\bin'
+$DefaultPrefix = Join-Path $env:LOCALAPPDATA 'hione\bin'
 $Binaries = @('hi', 'hi-monitor', 'hi-tauri')
 
 function Write-ColorText {
     param([string]$Text, [string]$Color = 'White')
-    if ($Host.UI.RawUI.ForegroundColor -ne $null) {
-        Write-Host -ForegroundColor $Color $Text
-    } else {
+    try {
+        $ConsoleColor = [System.ConsoleColor]$Color
+        Write-Host -ForegroundColor $ConsoleColor $Text
+    } catch {
         Write-Host $Text
     }
 }

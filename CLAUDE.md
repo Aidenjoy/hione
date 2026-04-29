@@ -173,6 +173,25 @@ Custom tools can be configured in `.hione/tools.toml` with `auto_flags` and `res
 - `README_zh.md` — Chinese documentation
 - `docs/user/installation.md` — Cross-platform installation guide
 
+## Windows Development Notes
+
+**重要：Windows 平台统一使用 PowerShell，不使用 cmd.exe**
+
+- 所有脚本文件使用 `.ps1` 格式（install.ps1, uninstall.ps1）
+- 所有进程管理使用 PowerShell 命令（Get-Process, Stop-Process）
+- 所有终端窗口启动使用 PowerShell（wt + powershell 或 Start-Process powershell）
+- 版本检测、路径查找使用 PowerShell（where.exe, powershell -Command）
+
+**禁止使用 cmd.exe 的场景**：
+- ❌ `Command::new("cmd")`
+- ❌ `tasklist` 命令
+- ❌ `cmd /C start` 启动窗口
+
+**正确做法**：
+- ✅ `Command::new("powershell")`
+- ✅ `Get-Process -Id <pid>` 检查进程
+- ✅ `Start-Process powershell` 启动窗口
+
 ## Testing Structure
 
 - **hi-core tests (40 tests):**

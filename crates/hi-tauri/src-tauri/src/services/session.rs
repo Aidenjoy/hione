@@ -94,17 +94,17 @@ pub async fn launch_session(
             .map_err(|e| AppError::CommandFailed(format!("无法打开终端: {}", e)))?;
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     {
         let wt_available = which::which("wt").is_ok();
         if wt_available {
             Command::new("wt")
-                .args(["new-tab", "cmd", "/C", &shell_cmd])
+                .args(["new-tab", "powershell", "-Command", &shell_cmd])
                 .spawn()
                 .map_err(|e| AppError::CommandFailed(format!("无法打开终端: {}", e)))?;
         } else {
-            Command::new("cmd")
-                .args(["/C", "start", "cmd", "/C", &shell_cmd])
+            Command::new("powershell")
+                .args(["-Command", &format!("Start-Process powershell -ArgumentList '-Command,{}'", shell_cmd)])
                 .spawn()
                 .map_err(|e| AppError::CommandFailed(format!("无法打开终端: {}", e)))?;
         }
@@ -242,15 +242,14 @@ pub fn detect_running_session(work_dir: &str) -> Result<Option<SessionInfo>, App
         // Windows 使用命名管道，无法通过文件检测
         // 通过检查 monitor_pid 进程是否存在来判断
         if let Some(pid) = session.monitor_pid {
-            // 检查进程是否存在
-            let output = Command::new("tasklist")
-                .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+            // 使用 PowerShell Get-Process 检查进程是否存在
+            let output = Command::new("powershell")
+                .args(["-Command", &format!("Get-Process -Id {} -ErrorAction SilentlyContinue", pid)])
                 .output();
 
             if let Ok(out) = output {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                // tasklist 返回包含 PID 的行表示进程存在
-                if stdout.contains(&pid.to_string()) {
+                // PowerShell 返回进程信息表示进程存在
+                if out.status.success() && !String::from_utf8_lossy(&out.stdout).trim().is_empty() {
                     return Ok(Some(session));
                 }
             }

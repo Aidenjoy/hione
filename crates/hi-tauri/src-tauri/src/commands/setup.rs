@@ -109,8 +109,8 @@ pub async fn install_dependency(name: String, window: Window) -> Result<(), Stri
         .map_err(|e| e.to_string())?;
 
     #[cfg(windows)]
-    let mut child = std::process::Command::new("cmd")
-        .args(["/C", cmd_str])
+    let mut child = std::process::Command::new("powershell")
+        .args(["-Command", cmd_str])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()

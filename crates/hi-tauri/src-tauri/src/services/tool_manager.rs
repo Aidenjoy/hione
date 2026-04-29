@@ -232,8 +232,8 @@ fn find_binary(name: &str) -> Option<std::path::PathBuf> {
                 }
             }
         }
-        // `cmd /C where` resolves the current system PATH, bypassing the stale process PATH.
-        if let Ok(out) = Command::new("cmd").args(["/C", &format!("where {}", name)]).output() {
+        // Windows: use PowerShell `where.exe` to find binary
+        if let Ok(out) = Command::new("where.exe").arg(name).output() {
             if out.status.success() {
                 let first = String::from_utf8_lossy(&out.stdout)
                     .lines()
@@ -407,9 +407,10 @@ pub fn detect_tool(name: &str) -> (bool, Option<String>) {
             None => return (false, None),
         };
         let bin_path_quoted = format!("\"{}\"", bin_path.to_string_lossy());
+        // Windows: use PowerShell to get version
         let cmd_to_run = tool.version_cmd.replace(tool.bin_name, &bin_path_quoted);
-        let version = Command::new("cmd")
-            .args(["/C", &cmd_to_run])
+        let version = Command::new("powershell")
+            .args(["-Command", &cmd_to_run])
             .output()
             .ok()
             .and_then(|o| parse_version_from_output(&o.stdout, &o.stderr));
@@ -469,12 +470,12 @@ pub async fn install_tool_async(name: String, window: Window) -> Result<(), AppE
 
     let tool = tool.unwrap();
 
-    // Windows: open a new terminal window to execute command with user's environment
+    // Windows: open a new PowerShell terminal window to execute command with user's environment
     #[cfg(windows)]
     {
         let cmd_str = tool.install_cmd;
-        Command::new("cmd")
-            .args(["/C", "start", "cmd", "/K", cmd_str])
+        Command::new("powershell")
+            .args(["-Command", &format!("Start-Process powershell -ArgumentList '-NoExit,-Command,{}'", cmd_str)])
             .spawn()?;
 
         let _ = window.emit("tool://install-log", json!({
@@ -568,12 +569,12 @@ pub async fn uninstall_tool_async(name: String, window: Window) -> Result<(), Ap
 
     let tool = tool.unwrap();
 
-    // Windows: open a new terminal window to execute command with user's environment
+    // Windows: open a new PowerShell terminal window to execute command with user's environment
     #[cfg(windows)]
     {
         let cmd_str = tool.uninstall_cmd;
-        Command::new("cmd")
-            .args(["/C", "start", "cmd", "/K", cmd_str])
+        Command::new("powershell")
+            .args(["-Command", &format!("Start-Process powershell -ArgumentList '-NoExit,-Command,{}'", cmd_str)])
             .spawn()?;
 
         let _ = window.emit("tool://uninstall-log", json!({

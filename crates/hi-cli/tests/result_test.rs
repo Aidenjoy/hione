@@ -1,7 +1,12 @@
+#[cfg(unix)]
 use hi_cli::commands::submit;
+#[cfg(unix)]
 use hi_core::db::{init_db, insert_message};
+#[cfg(unix)]
 use hi_core::ipc::recv_message;
+#[cfg(unix)]
 use hi_core::message::Message;
+#[cfg(unix)]
 use uuid::Uuid;
 
 #[cfg(unix)]

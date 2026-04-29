@@ -33,9 +33,10 @@ pub async fn read_latest_response(tool: &str, cwd: &Path) -> Option<String> {
 fn encode_cwd_for_claude(cwd: &Path) -> Option<String> {
     let abs = cwd.canonicalize().ok()?;
     let path_str = abs.to_string_lossy();
-    // /path/to/project -> -path-to-project
-    // 经确认为 Claude Code 实际采用的编码方式（带前导 -）
-    Some(path_str.replace('/', "-"))
+    // Unix: /path/to/project -> -path-to-project
+    // Windows: C:\path\to\project -> -C:-path-to-project
+    // Replace both path separators with dash
+    Some(path_str.replace('/', "-").replace('\\', "-"))
 }
 
 fn read_claude_code_history(cwd: &Path) -> Option<String> {

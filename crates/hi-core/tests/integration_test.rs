@@ -1,6 +1,6 @@
 // tests/integration_test.rs
 // 测试 IPC 帧读写端到端
-use hi_core::{ipc::{recv_message, send_message}, message::Message};
+use hi_core::message::Message;
 
 #[tokio::test]
 async fn test_ipc_roundtrip() {

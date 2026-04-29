@@ -1,6 +1,10 @@
+#[cfg(unix)]
 use hi_cli::commands::send_cancel;
+#[cfg(unix)]
 use hi_core::ipc::recv_message;
+#[cfg(unix)]
 use hi_core::message::{MessageType, TaskStatus};
+#[cfg(unix)]
 use uuid::Uuid;
 
 #[cfg(unix)]

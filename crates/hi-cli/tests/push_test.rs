@@ -1,5 +1,8 @@
+#[cfg(unix)]
 use hi_cli::commands::send_to_monitor;
+#[cfg(unix)]
 use hi_core::ipc::recv_message;
+#[cfg(unix)]
 use hi_core::message::Message;
 
 #[cfg(unix)]

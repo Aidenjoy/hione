@@ -1,11 +1,16 @@
+#[cfg(unix)]
 use hi_cli::commands::probe;
+#[cfg(unix)]
 use hi_core::ipc::{recv_message, send_message};
+#[cfg(unix)]
 use hi_core::message::{Message, MessageType, TaskStatus};
+#[cfg(unix)]
 use uuid::Uuid;
 
 #[cfg(unix)]
 use tokio::net::UnixListener;
 
+#[cfg(unix)]
 #[cfg(unix)]
 async fn start_mock(sock: std::path::PathBuf, respond_ack: bool) {
     let listener = UnixListener::bind(&sock).unwrap();

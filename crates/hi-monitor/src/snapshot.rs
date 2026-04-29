@@ -1,7 +1,6 @@
 use crate::server::MonitorState;
 use hi_core::{
     history::read_latest_response,
-    ipc::{recv_message, send_message},
     message::{Message, MessageType, TaskStatus},
 };
 use std::{path::Path, process::Command, time::Duration};

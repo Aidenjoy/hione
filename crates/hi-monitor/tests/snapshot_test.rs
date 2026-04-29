@@ -1,11 +1,19 @@
+#[cfg(unix)]
 use hi_core::db::init_db;
+#[cfg(unix)]
 use hi_core::ipc::{recv_message, send_message};
+#[cfg(unix)]
 use hi_core::message::{Message, MessageType, TaskStatus};
+#[cfg(unix)]
 use hi_core::session::{SessionInfo, WindowInfo};
+#[cfg(unix)]
 use hi_monitor::snapshot::request_snapshot;
+#[cfg(unix)]
 use hi_monitor::server::MonitorState;
+#[cfg(unix)]
 use uuid::Uuid;
 
+#[cfg(unix)]
 async fn mk_state(dir: &std::path::Path) -> MonitorState {
     let pool = init_db(dir).await.unwrap();
     let session = SessionInfo {
@@ -30,6 +38,7 @@ async fn mk_state(dir: &std::path::Path) -> MonitorState {
     MonitorState::new(session, pool, dir.to_path_buf())
 }
 
+#[cfg(unix)]
 fn mk_req(target: &str) -> Message {
     Message {
         id: Uuid::new_v4(),

@@ -1,5 +1,5 @@
 use hi_core::session::{SessionInfo, WindowInfo};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[cfg(unix)]
 #[test]

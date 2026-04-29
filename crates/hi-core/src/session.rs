@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Get the multiplexer binary name for the current platform
+fn mux_bin() -> &'static str {
+    if cfg!(windows) { "psmux" } else { "tmux" }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowInfo {
     pub index: usize,
@@ -36,7 +41,17 @@ impl SessionInfo {
         #[cfg(unix)]
         return hione_dir.join("hi.sock").to_string_lossy().to_string();
         #[cfg(windows)]
-        return r"\\.\pipe\hione".to_string();
+        {
+            // Derive unique pipe name from hione_dir path
+            // Windows named pipes names must be valid and unique per project
+            // Use a hash of the path to create a unique identifier
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            hione_dir.hash(&mut hasher);
+            let hash = hasher.finish();
+            format!("hione_{}", hash)
+        }
     }
 
     /// 从文件加载 session（如果存在）
@@ -49,8 +64,8 @@ impl SessionInfo {
         serde_json::from_str(&content).ok()
     }
 
-    /// 清理旧 session：kill monitor + 关闭 tmux session + 删除 socket
-    /// 如果 `current_session_name` 与 self.tmux_session_name 相同，则跳过关闭 tmux session
+    /// 清理旧 session：kill monitor + 关闭 mux session + 删除 socket
+    /// 如果 `current_session_name` 与 self.tmux_session_name 相同，则跳过关闭 mux session
     pub fn cleanup(&self, current_session_name: Option<&str>) {
         // 1. Kill monitor 进程
         if let Some(pid) = self.monitor_pid {
@@ -61,44 +76,46 @@ impl SessionInfo {
                     .arg(pid.to_string())
                     .status();
             }
+            #[cfg(windows)]
+            {
+                use std::process::Command;
+                // Windows 使用 taskkill
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/PID", &pid.to_string()])
+                    .status();
+            }
         }
 
-        // 2. 关闭 tmux session（但跳过当前正在使用的同名 session）
+        // 2. 关闭 mux session（但跳过当前正在使用的同名 session）
         if let Some(session_name) = &self.tmux_session_name {
-            // 如果当前在同名 tmux session 中，跳过关闭，避免把用户的 session 杀掉
+            // 如果当前在同名 mux session 中，跳过关闭，避免把用户的 session 杀掉
             let is_current_session = current_session_name == Some(session_name.as_str());
             if is_current_session {
                 // 只清理 hi panes（带有 @hi_label 标记的）
-                #[cfg(unix)]
-                {
-                    use std::process::Command;
-                    // 先获取 hi panes 的 ID 列表
-                    let output = Command::new("tmux")
-                        .args(["list-panes", "-s", "-t", session_name, "-F", "#{pane_id}:#{@hi_label}"])
-                        .output()
-                        .ok();
+                use std::process::Command;
+                // 先获取 hi panes 的 ID 列表
+                let output = Command::new(mux_bin())
+                    .args(["list-panes", "-s", "-t", session_name, "-F", "#{pane_id}:#{@hi_label}"])
+                    .output()
+                    .ok();
 
-                    if let Some(output) = output {
-                        if let Ok(stdout) = String::from_utf8(output.stdout) {
-                            for line in stdout.lines() {
-                                let parts: Vec<&str> = line.splitn(2, ':').collect();
-                                if parts.len() == 2 && !parts[1].is_empty() {
-                                    let _ = Command::new("tmux")
-                                        .args(["kill-pane", "-t", parts[0]])
-                                        .status();
-                                }
+                if let Some(output) = output {
+                    if let Ok(stdout) = String::from_utf8(output.stdout) {
+                        for line in stdout.lines() {
+                            let parts: Vec<&str> = line.splitn(2, ':').collect();
+                            if parts.len() == 2 && !parts[1].is_empty() {
+                                let _ = Command::new(mux_bin())
+                                    .args(["kill-pane", "-t", parts[0]])
+                                    .status();
                             }
                         }
                     }
                 }
             } else {
-                #[cfg(unix)]
-                {
-                    use std::process::Command;
-                    let _ = Command::new("tmux")
-                        .args(["kill-session", "-t", session_name])
-                        .status();
-                }
+                use std::process::Command;
+                let _ = Command::new(mux_bin())
+                    .args(["kill-session", "-t", session_name])
+                    .status();
             }
         }
 

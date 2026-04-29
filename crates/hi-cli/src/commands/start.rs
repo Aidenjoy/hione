@@ -9,6 +9,17 @@ use uuid::Uuid;
 
 use super::common::send_to_monitor;
 
+/// Get the multiplexer binary name for the current platform
+fn mux_bin() -> &'static str {
+    if cfg!(windows) { "psmux" } else { "tmux" }
+}
+
+/// Check if we're inside a multiplexer session
+fn in_mux_session() -> bool {
+    // psmux also sets TMUX environment variable for compatibility
+    env::var("TMUX").is_ok() || env::var("PSMUX_SESSION_NAME").is_ok()
+}
+
 #[derive(serde::Deserialize, Default)]
 struct ToolConfig {
     #[serde(default)]
@@ -44,7 +55,12 @@ fn build_launch_command_with_hione(name: &str, auto_mode: bool, resume_mode: boo
         let with_resume = build_single_cmd(name, auto_mode, true, hione_dir);
         let without_resume = build_single_cmd(name, auto_mode, false, hione_dir);
         if with_resume != without_resume {
-            format!("{} || {}", with_resume, without_resume)
+            // Windows PowerShell doesn't support || operator, wrap in cmd.exe
+            if cfg!(windows) {
+                format!("cmd /C \"{} || {}\"", with_resume, without_resume)
+            } else {
+                format!("{} || {}", with_resume, without_resume)
+            }
         } else {
             with_resume
         }
@@ -115,12 +131,12 @@ pub async fn run(
     }
 
     // 1. 确定运行模式
-    let in_tmux = env::var("TMUX").is_ok();
+    let in_mux = in_mux_session();
     let has_tauri = find_bin("hi-tauri").is_ok();
 
-    // 在清理前先获取当前 tmux session 名称（如果有的话）
-    let current_tmux_session = if in_tmux {
-        Command::new("tmux")
+    // 在清理前先获取当前 multiplexer session 名称（如果有的话）
+    let current_mux_session = if in_mux {
+        Command::new(mux_bin())
             .args(["display-message", "-p", "#{session_name}"])
             .output()
             .ok()
@@ -141,10 +157,10 @@ pub async fn run(
         true
     } else {
         // 自动选择逻辑：
-        // 1. 如果在 TMUX 中，优先使用终端模式（满足 CLI 连续性）
+        // 1. 如果在 multiplexer 中，优先使用终端模式（满足 CLI 连续性）
         // 2. 否则如果找到 hi-tauri，使用桌面模式
-        // 3. 否则回退到终端模式（会在 start_tmux_fallback 中报错提示进入 TMUX）
-        !in_tmux && has_tauri
+        // 3. 否则回退到终端模式（会在 start_mux_fallback 中报错提示进入 multiplexer）
+        !in_mux && has_tauri
     };
 
     // 2. 创建 .hione 目录
@@ -154,7 +170,7 @@ pub async fn run(
     // 2.1 清理旧 session（如果存在）
     if let Some(old_session) = SessionInfo::load_from(&hione_dir) {
         println!("Cleaning up old session...");
-        old_session.cleanup(current_tmux_session.as_deref());
+        old_session.cleanup(current_mux_session.as_deref());
         // 给进程一点时间退出
         std::thread::sleep(std::time::Duration::from_millis(300));
     }
@@ -237,14 +253,14 @@ pub async fn run(
 
         println!("Hi session started in Desktop mode: {}", work_dir.display());
     } else {
-        // Tmux 模式
-        start_tmux_fallback(&names, &mut session, &hione_dir)?;
+        // Multiplexer 模式
+        start_mux_fallback(&names, &mut session, &hione_dir)?;
 
-        // 写入更新后的 session.json（含 tmux_session_name 和 pane_id）
+        // 写入更新后的 session.json（含 mux_session_name 和 pane_id）
         let updated_json = serde_json::to_string_pretty(&session)?;
         fs::write(hione_dir.join("session.json"), &updated_json)?;
 
-        // tmux 启动完成后，通知 monitor 更新 session（携带 pane_id）
+        // mux 启动完成后，通知 monitor 更新 session（携带 pane_id）
         notify_session_ready(&session).await?;
 
         println!("Hi session started in Terminal mode");
@@ -331,11 +347,15 @@ fn find_bin(name: &str) -> Result<PathBuf> {
     anyhow::bail!("{name} not found in PATH")
 }
 
-fn start_tmux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &Path) -> Result<()> {
-    if env::var("TMUX").is_err() {
+fn start_mux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &Path) -> Result<()> {
+    let mux = mux_bin();
+    if !in_mux_session() {
         anyhow::bail!(
             "hi-tauri not found. Install with: bash scripts/install.sh --with-desktop\n\
-             Or run inside tmux for terminal fallback."
+             Or run inside {} for terminal fallback.\n\
+             On Windows: psmux new-session -s hi\n\
+             On Unix: tmux new-session -s hi",
+            mux
         );
     }
 
@@ -344,16 +364,16 @@ fn start_tmux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &
         return Ok(())
     }
 
-    let session_name_output = Command::new("tmux")
+    let session_name_output = Command::new(mux)
         .args(["display-message", "-p", "#{session_name}"])
         .output()
-        .context("Failed to get tmux session name")?;
-    let tmux_session_name = String::from_utf8(session_name_output.stdout)?.trim().to_string();
+        .context("Failed to get mux session name")?;
+    let mux_session_name = String::from_utf8(session_name_output.stdout)?.trim().to_string();
 
-    let hi_panes_output = Command::new("tmux")
-        .args(["list-panes", "-s", "-t", &tmux_session_name, "-F", "#{pane_id}:#{@hi_label}"])
+    let hi_panes_output = Command::new(mux)
+        .args(["list-panes", "-s", "-t", &mux_session_name, "-F", "#{pane_id}:#{@hi_label}"])
         .output()
-        .context("Failed to list tmux panes")?;
+        .context("Failed to list mux panes")?;
     let hi_panes_str = String::from_utf8(hi_panes_output.stdout)?;
     let hi_panes_count = hi_panes_str
         .lines()
@@ -362,31 +382,31 @@ fn start_tmux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &
 
     if hi_panes_count > 0 {
         anyhow::bail!(
-            "Current tmux session '{}' already has {} hi panes.\n\
-             Please create a new tmux session for this project:\n\
-             tmux new -s <name>\n\
+            "Current {} session '{}' already has {} hi panes.\n\
+             Please create a new session for this project:\n\
+             {} new -s <name>\n\
              Or clean up the existing hi session first:\n\
-             hi s --monitor-only && pkill -f hi-monitor",
-            tmux_session_name, hi_panes_count
+             hi s --monitor-only",
+            mux, mux_session_name, hi_panes_count, mux
         );
     }
 
-    session.tmux_session_name = Some(tmux_session_name.clone());
+    session.tmux_session_name = Some(mux_session_name.clone());
 
-    let output = Command::new("tmux")
+    let output = Command::new(mux)
         .args(["display-message", "-p", "#{pane_id}"])
         .output()
-        .context("Failed to get initial tmux pane ID")?;
+        .context("Failed to get initial mux pane ID")?;
     let ids_str = String::from_utf8(output.stdout)?;
     let initial_pane_id = ids_str.trim().to_string();
 
     let mut pane_ids: Vec<String> = Vec::with_capacity(n);
 
     if n == 1 {
-        let output = Command::new("tmux")
+        let output = Command::new(mux)
             .args(["split-window", "-h", "-p", "50", "-P", "-F", "#{pane_id}"])
             .output()
-            .context("Failed to split tmux window horizontally")?;
+            .context("Failed to split mux window horizontally")?;
         let new_pane = String::from_utf8(output.stdout)?.trim().to_string();
         pane_ids.push(new_pane);
     } else {
@@ -394,18 +414,18 @@ fn start_tmux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &
         let r_count = n - l_count;
 
         // Right column: first pane from horizontal split, rest from vertical splits
-        let output = Command::new("tmux")
+        let output = Command::new(mux)
             .args(["split-window", "-h", "-p", "50", "-P", "-F", "#{pane_id}"])
             .output()
-            .context("Failed to split tmux window horizontally")?;
+            .context("Failed to split mux window horizontally")?;
         let right_top = String::from_utf8(output.stdout)?.trim().to_string();
         let mut right_panes = vec![right_top.clone()];
         let mut last_right = right_top;
         for _ in 1..r_count {
-            let output = Command::new("tmux")
+            let output = Command::new(mux)
                 .args(["split-window", "-v", "-t", &last_right, "-P", "-F", "#{pane_id}"])
                 .output()
-                .context("Failed to split tmux window vertically in right column")?;
+                .context("Failed to split mux window vertically in right column")?;
             last_right = String::from_utf8(output.stdout)?.trim().to_string();
             right_panes.push(last_right.clone());
         }
@@ -414,10 +434,10 @@ fn start_tmux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &
         let mut left_panes = Vec::new();
         let mut last_left = initial_pane_id.clone();
         for _ in 0..l_count {
-            let output = Command::new("tmux")
+            let output = Command::new(mux)
                 .args(["split-window", "-v", "-t", &last_left, "-P", "-F", "#{pane_id}"])
                 .output()
-                .context("Failed to split tmux window vertically in left column")?;
+                .context("Failed to split mux window vertically in left column")?;
             last_left = String::from_utf8(output.stdout)?.trim().to_string();
             left_panes.push(last_left.clone());
         }
@@ -438,67 +458,67 @@ fn start_tmux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &
         let pane_id = &pane_ids[i];
         let label = format!("{} {}", i + 1, name);
 
-        Command::new("tmux")
+        Command::new(mux)
             .args(["set-option", "-p", "-t", pane_id, "@hi_label", &label])
             .status()
-            .context("Failed to set tmux pane label")?;
+            .context("Failed to set mux pane label")?;
 
         let launch_cmd = &session.windows[i].launch_command;
 
-        Command::new("tmux")
+        Command::new(mux)
             .args(["send-keys", "-t", pane_id, launch_cmd, "Enter"])
             .status()
-            .context("Failed to send keys to tmux pane")?;
+            .context("Failed to send keys to mux pane")?;
 
         if let Some(window) = session.windows.iter_mut().find(|w| w.name == *name) {
             window.tmux_pane_id = Some(pane_id.clone());
         }
     }
 
-    Command::new("tmux")
+    Command::new(mux)
         .args(["set-option", "pane-border-status", "top"])
         .status()
-        .context("Failed to set tmux pane-border-status")?;
+        .context("Failed to set mux pane-border-status")?;
 
-    Command::new("tmux")
+    Command::new(mux)
         .args([
             "set-option",
             "pane-border-format",
             "#[bg=colour235,fg=colour214,bold] #{@hi_label} #[default]",
         ])
         .status()
-        .context("Failed to set tmux pane-border-format")?;
+        .context("Failed to set mux pane-border-format")?;
 
-    Command::new("tmux")
+    Command::new(mux)
         .args(["set-option", "pane-border-style", "fg=colour240"])
         .status()
-        .context("Failed to set tmux pane-border-style")?;
+        .context("Failed to set mux pane-border-style")?;
 
-    Command::new("tmux")
+    Command::new(mux)
         .args(["set-option", "pane-active-border-style", "fg=colour214"])
         .status()
-        .context("Failed to set tmux pane-active-border-style")?;
+        .context("Failed to set mux pane-active-border-style")?;
 
-    Command::new("tmux")
+    Command::new(mux)
         .args(["set-option", "-g", "mouse", "on"])
         .status()
-        .context("Failed to enable tmux mouse support")?;
+        .context("Failed to enable mux mouse support")?;
 
     // 8. 更新 session.json
     let updated_json = serde_json::to_string_pretty(session)?;
     fs::write(hione_dir.join("session.json"), &updated_json)?;
 
     // 终端窗口关闭时（无 client 附加），自动销毁 session
-    let _ = Command::new("tmux")
+    let _ = Command::new(mux)
         .args(["set-option", "destroy-unattached", "on"])
         .status();
 
     std::thread::sleep(std::time::Duration::from_millis(100));
-    let _ = Command::new("tmux")
+    let _ = Command::new(mux)
         .args(["kill-pane", "-t", &initial_pane_id])
         .status();
 
-    println!("Hi session started in tmux mode");
+    println!("Hi session started in {} mode", mux);
     println!("Panes: {}", names.join(", "));
     Ok(())
 }
@@ -549,35 +569,44 @@ mod tests {
 
     #[test]
     fn test_build_launch_command() {
+        // Helper to get expected fallback syntax based on platform
+        let fallback = |with: &str, without: &str| -> String {
+            if cfg!(windows) {
+                format!("cmd /C \"{} || {}\"", with, without)
+            } else {
+                format!("{} || {}", with, without)
+            }
+        };
+
         // Claude
         assert_eq!(cmd("claude", false, false), "claude");
         assert_eq!(cmd("claude", true,  false), "claude --dangerously-skip-permissions");
-        assert_eq!(cmd("claude", false, true),  "claude --continue || claude");
-        assert_eq!(cmd("claude", true,  true),  "claude --dangerously-skip-permissions --continue || claude --dangerously-skip-permissions");
+        assert_eq!(cmd("claude", false, true),  fallback("claude --continue", "claude"));
+        assert_eq!(cmd("claude", true,  true),  fallback("claude --dangerously-skip-permissions --continue", "claude --dangerously-skip-permissions"));
 
         // Gemini
         assert_eq!(cmd("gemini", false, false), "gemini");
         assert_eq!(cmd("gemini", true,  false), "gemini --yolo");
-        assert_eq!(cmd("gemini", false, true),  "gemini --resume latest || gemini");
-        assert_eq!(cmd("gemini", true,  true),  "gemini --yolo --resume latest || gemini --yolo");
+        assert_eq!(cmd("gemini", false, true),  fallback("gemini --resume latest", "gemini"));
+        assert_eq!(cmd("gemini", true,  true),  fallback("gemini --yolo --resume latest", "gemini --yolo"));
 
         // OpenCode — no auto flag
         assert_eq!(cmd("opencode", false, false), "opencode");
         assert_eq!(cmd("opencode", true,  false), "opencode");
-        assert_eq!(cmd("opencode", false, true),  "opencode --continue || opencode");
-        assert_eq!(cmd("opencode", true,  true),  "opencode --continue || opencode");
+        assert_eq!(cmd("opencode", false, true),  fallback("opencode --continue", "opencode"));
+        assert_eq!(cmd("opencode", true,  true),  fallback("opencode --continue", "opencode"));
 
         // Qwen
         assert_eq!(cmd("qwen", false, false), "qwen");
         assert_eq!(cmd("qwen", true,  false), "qwen --yolo");
-        assert_eq!(cmd("qwen", false, true),  "qwen --continue || qwen");
-        assert_eq!(cmd("qwen", true,  true),  "qwen --yolo --continue || qwen --yolo");
+        assert_eq!(cmd("qwen", false, true),  fallback("qwen --continue", "qwen"));
+        assert_eq!(cmd("qwen", true,  true),  fallback("qwen --yolo --continue", "qwen --yolo"));
 
         // Codex — resume is a subcommand
         assert_eq!(cmd("codex", false, false), "codex");
         assert_eq!(cmd("codex", true,  false), "codex --full-auto");
-        assert_eq!(cmd("codex", false, true),  "codex resume --last || codex");
-        assert_eq!(cmd("codex", true,  true),  "codex resume --last --full-auto || codex --full-auto");
+        assert_eq!(cmd("codex", false, true),  fallback("codex resume --last", "codex"));
+        assert_eq!(cmd("codex", true,  true),  fallback("codex resume --last --full-auto", "codex --full-auto"));
 
         // Unknown — pass through (no tools.toml in test)
         assert_eq!(cmd("mytool", false, false), "mytool");
@@ -604,13 +633,24 @@ mod tests {
             build_launch_command_with_hione("ccg", true, false, &hione_dir),
             "ccg --dangerously-skip-permissions"
         );
+        // Resume fallback uses platform-specific syntax
+        let expected_resume = if cfg!(windows) {
+            "cmd /C \"ccg --continue || ccg\""
+        } else {
+            "ccg --continue || ccg"
+        };
         assert_eq!(
             build_launch_command_with_hione("ccg", false, true, &hione_dir),
-            "ccg --continue || ccg"
+            expected_resume
         );
+        let expected_resume_auto = if cfg!(windows) {
+            "cmd /C \"ccg --dangerously-skip-permissions --continue || ccg --dangerously-skip-permissions\""
+        } else {
+            "ccg --dangerously-skip-permissions --continue || ccg --dangerously-skip-permissions"
+        };
         assert_eq!(
             build_launch_command_with_hione("ccg", true, true, &hione_dir),
-            "ccg --dangerously-skip-permissions --continue || ccg --dangerously-skip-permissions"
+            expected_resume_auto
         );
         // tool not in config still passes through
         assert_eq!(

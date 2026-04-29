@@ -36,6 +36,13 @@ pub async fn launch_session(
     hi_args.push(tools.join(","));
     let hi_cmd = format!("hi {}", hi_args.join(" "));
 
+    #[cfg(windows)]
+    let shell_cmd = format!(
+        "cd /d \"{}\" & psmux new-session -s {} -- cmd /K \"{}\"",
+        work_dir, session_name, hi_cmd
+    );
+
+    #[cfg(not(windows))]
     let shell_cmd = format!(
         "cd '{}' && tmux new-session -s '{}' '{}'",
         work_dir.replace('\'', "'\\''"),
@@ -85,10 +92,12 @@ pub async fn launch_session(
 
     #[cfg(target_os = "windows")]
     {
+        // Windows Terminal 如果可用则使用，否则使用 cmd
         let wt_available = which::which("wt").is_ok();
         if wt_available {
+            // wt 需要完整的命令行参数
             Command::new("wt")
-                .args(["cmd", "/K", &shell_cmd])
+                .args(["new-tab", "cmd", "/K", &shell_cmd])
                 .spawn()
                 .map_err(|e| AppError::CommandFailed(format!("无法打开终端: {}", e)))?;
         } else {
@@ -126,9 +135,43 @@ pub async fn launch_session(
     // 异步等待 hi-monitor 启动后发 connected: true
     let window_clone = window.clone();
     let work_dir_owned = work_dir.to_string();
-    let sock_path = PathBuf::from(work_dir).join(".hione").join("hi.sock");
-    tokio::spawn(async move {
-        // 最多等 30 秒，每秒检查一次 hi.sock 是否出现
+
+    #[cfg(windows)]
+    let sock_check = async move {
+        // Windows 使用命名管道，通过尝试连接来检测
+        use interprocess::local_socket::tokio::prelude::LocalSocketStream;
+        use interprocess::local_socket::traits::tokio::Stream;
+        use interprocess::local_socket::{ToNsName, GenericNamespaced};
+
+        // Get the expected pipe name based on work_dir
+        let hione_dir = PathBuf::from(&work_dir_owned).join(".hione");
+        let expected_pipe_name = SessionInfo::socket_path_for(&hione_dir);
+        let pipe_name = expected_pipe_name.split('\\').last().unwrap_or(&expected_pipe_name);
+
+        for _ in 0..30 {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            // 尝试连接命名管道来检测 monitor 是否启动
+            let name = pipe_name.to_ns_name::<GenericNamespaced>();
+            if let Ok(ns_name) = name {
+                if LocalSocketStream::connect(ns_name).await.is_ok() {
+                    // 连接成功说明 monitor 已启动
+                    let _ = window_clone.emit(
+                        "session://status",
+                        json!({ "connected": true, "work_dir": work_dir_owned }),
+                    );
+                    return;
+                }
+            }
+        }
+        let _ = window_clone.emit(
+            "session://status",
+            json!({ "connected": false, "work_dir": work_dir_owned, "error": "hi-monitor 未在 30 秒内启动" }),
+        );
+    };
+
+    #[cfg(not(windows))]
+    let sock_check = async move {
+        let sock_path = PathBuf::from(work_dir).join(".hione").join("hi.sock");
         for _ in 0..30 {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             if sock_path.exists() {
@@ -139,12 +182,13 @@ pub async fn launch_session(
                 return;
             }
         }
-        // 超时仍未出现 socket，发失败通知
         let _ = window_clone.emit(
             "session://status",
             json!({ "connected": false, "work_dir": work_dir_owned, "error": "hi-monitor 未在 30 秒内启动" }),
         );
-    });
+    };
+
+    tokio::spawn(sock_check);
 
     Ok(())
 }
@@ -164,17 +208,41 @@ pub fn read_session_info(work_dir: &str) -> Result<Option<SessionInfo>, AppError
 
 pub fn detect_running_session(work_dir: &str) -> Result<Option<SessionInfo>, AppError> {
     let session = read_session_info(work_dir)?;
-    
+
     if session.is_none() {
         return Ok(None);
     }
-    
+
     let session = session.unwrap();
-    let socket_path = PathBuf::from(work_dir).join(".hione").join("hi.sock");
-    
-    if socket_path.exists() {
-        Ok(Some(session))
-    } else {
+
+    #[cfg(unix)]
+    {
+        let socket_path = PathBuf::from(work_dir).join(".hione").join("hi.sock");
+        if socket_path.exists() {
+            Ok(Some(session))
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        // Windows 使用命名管道，无法通过文件检测
+        // 通过检查 monitor_pid 进程是否存在来判断
+        if let Some(pid) = session.monitor_pid {
+            // 检查进程是否存在
+            let output = Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+                .output();
+
+            if let Ok(out) = output {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                // tasklist 返回包含 PID 的行表示进程存在
+                if stdout.contains(&pid.to_string()) {
+                    return Ok(Some(session));
+                }
+            }
+        }
         Ok(None)
     }
 }

@@ -1,6 +1,8 @@
 use hi_cli::commands::send_to_monitor;
 use hi_core::ipc::recv_message;
 use hi_core::message::Message;
+
+#[cfg(unix)]
 use tokio::net::UnixListener;
 
 #[cfg(unix)]

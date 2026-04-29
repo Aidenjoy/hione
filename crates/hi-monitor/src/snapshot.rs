@@ -8,6 +8,11 @@ use std::{path::Path, process::Command, time::Duration};
 use tokio::time;
 use uuid::Uuid;
 
+/// Get the multiplexer binary name for the current platform
+fn mux_bin() -> &'static str {
+    if cfg!(windows) { "psmux" } else { "tmux" }
+}
+
 pub async fn poll_snapshots(state: MonitorState) {
     let mut interval = time::interval(Duration::from_secs(2));
     loop {
@@ -57,11 +62,12 @@ pub async fn request_snapshot(
                     snapshots.insert(req.receiver.clone(), content);
                     return Ok(())
                 }
-                
+
                 if let Some(pane_id) = tmux_pane_id {
                     let pane_id = pane_id.clone();
+                    let mux = mux_bin();
                     let content = tokio::task::spawn_blocking(move || {
-                        Command::new("tmux")
+                        Command::new(mux)
                             .args(["capture-pane", "-p", "-t", &pane_id, "-S", "-500"])
                             .output()
                             .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
@@ -84,6 +90,29 @@ pub async fn request_snapshot(
         if resp.msg_type == MessageType::SnapshotData {
             let mut snapshots = state.snapshots.write().await;
             snapshots.insert(req.receiver.clone(), resp.content);
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        // Windows: use psmux capture-pane or read history
+        if let Some(content) = read_latest_response(window_name, cwd).await {
+            let mut snapshots = state.snapshots.write().await;
+            snapshots.insert(req.receiver.clone(), content);
+            return Ok(())
+        }
+
+        if let Some(pane_id) = tmux_pane_id {
+            let pane_id = pane_id.clone();
+            let content = tokio::task::spawn_blocking(move || {
+                Command::new(mux_bin())
+                    .args(["capture-pane", "-p", "-t", &pane_id, "-S", "-500"])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            })
+            .await??;
+            let mut snapshots = state.snapshots.write().await;
+            snapshots.insert(req.receiver.clone(), content);
         }
     }
     Ok(())

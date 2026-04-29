@@ -42,7 +42,7 @@ pub async fn check_setup() -> Result<SetupStatus, String> {
 
     #[cfg(windows)]
     let (tmux, node, rust) = (
-        wsl_has("tmux") || which("tmux").is_ok(),
+        wsl_has("tmux") || which("psmux").is_ok() || which("tmux").is_ok(),
         wsl_has("node") || which("node").is_ok(),
         wsl_has("rustc") || which("rustc").is_ok(),
     );
@@ -78,7 +78,7 @@ pub async fn check_setup() -> Result<SetupStatus, String> {
 #[tauri::command]
 pub async fn install_dependency(name: String, window: Window) -> Result<(), String> {
     let cmd_str = match name.as_str() {
-        // On Windows the multiplexer is psmux (Windows-native), not tmux.
+        // On Windows the multiplexer is psmux (Rust crate), not tmux.
         // The setup page may still emit "tmux" as the key; redirect to psmux install.
         "tmux" | "psmux" => {
             #[cfg(target_os = "macos")]
@@ -86,7 +86,7 @@ pub async fn install_dependency(name: String, window: Window) -> Result<(), Stri
             #[cfg(target_os = "linux")]
             { "sudo apt install -y tmux" }
             #[cfg(windows)]
-            { "npm install -g psmux" }
+            { "cargo install psmux" }
             #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
             { return Err("tmux/psmux installation not supported on this platform".to_string()); }
         }

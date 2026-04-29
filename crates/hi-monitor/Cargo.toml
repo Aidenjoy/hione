@@ -23,5 +23,6 @@ clap       = { workspace = true }
 chrono     = { workspace = true }
 uuid       = { workspace = true }
 tempfile   = { workspace = true }
+interprocess = { version = "2", features = ["tokio"] }
 
 [dev-dependencies]

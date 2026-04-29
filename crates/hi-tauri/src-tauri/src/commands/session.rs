@@ -79,6 +79,11 @@ pub async fn kill_session(
     use std::process::Command;
     use std::path::PathBuf;
 
+    /// Get the multiplexer binary name for the current platform
+    fn mux_bin() -> &'static str {
+        if cfg!(windows) { "psmux" } else { "tmux" }
+    }
+
     let session_path = PathBuf::from(&work_dir).join(".hione").join("session.json");
     let _tmux_killed = false;
 
@@ -94,7 +99,7 @@ pub async fn kill_session(
                     if let Some(windows) = session.get("windows").and_then(|v| v.as_array()) {
                         for w in windows {
                             if let Some(pane_id) = w.get("tmux_pane_id").and_then(|v| v.as_str()) {
-                                if let Ok(out) = Command::new("tmux")
+                                if let Ok(out) = Command::new(mux_bin())
                                     .args(["display-message", "-p", "-t", pane_id, "#{session_name}"])
                                     .output()
                                 {
@@ -112,7 +117,7 @@ pub async fn kill_session(
                 }
 
                 if let Some(ref name) = session_name {
-                    let _ = Command::new("tmux")
+                    let _ = Command::new(mux_bin())
                         .args(["kill-session", "-t", name])
                         .status();
 
@@ -165,9 +170,15 @@ pub async fn kill_session(
                 }
 
                 if let Some(pid) = session.get("monitor_pid").and_then(|v| v.as_u64()) {
+                    #[cfg(unix)]
                     let _ = Command::new("kill").arg(pid.to_string()).status();
+                    #[cfg(windows)]
+                    let _ = Command::new("taskkill")
+                        .args(["/F", "/PID", &pid.to_string()])
+                        .status();
                 }
 
+                #[cfg(unix)]
                 if let Some(socket) = session.get("socket_path").and_then(|v| v.as_str()) {
                     let _ = std::fs::remove_file(socket);
                 }

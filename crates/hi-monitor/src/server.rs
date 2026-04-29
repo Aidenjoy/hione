@@ -20,6 +20,11 @@ use crate::{task_queue::TaskQueueMap, tmux::deliver_to_pane};
 
 pub const PULL_COOLDOWN_SECS: u64 = 60;
 
+/// Get the multiplexer binary name for the current platform
+fn mux_bin() -> &'static str {
+    if cfg!(windows) { "psmux" } else { "tmux" }
+}
+
 #[derive(Clone)]
 pub struct MonitorState {
     pub session: Arc<RwLock<SessionInfo>>,
@@ -76,7 +81,7 @@ pub async fn run(state: MonitorState) -> Result<()> {
             let (stream, _) = listener.accept().await?;
             let state = state.clone();
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(stream, state).await {
+                if let Err(e) = handle_connection_unix(stream, state).await {
                     tracing::error!("Connection error: {e}");
                 }
             });
@@ -84,18 +89,53 @@ pub async fn run(state: MonitorState) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        anyhow::bail!("Windows named pipe not yet implemented");
+        use interprocess::local_socket::{ListenerOptions, ToNsName, GenericNamespaced};
+        use interprocess::local_socket::traits::tokio::Listener;
+        // Windows uses namespaced pipes, get name from session's socket_path
+        let socket_path = state.session.read().await.socket_path.clone();
+        // socket_path is "hione_<hash>" format, extract the name part for to_ns_name
+        let pipe_name = socket_path.split('\\').last().unwrap_or(&socket_path);
+        let name = pipe_name.to_ns_name::<GenericNamespaced>()?;
+        let listener = ListenerOptions::new()
+            .name(name)
+            .create_tokio()?;
+        tracing::info!("IPC server listening on named pipe '{}'", pipe_name);
+
+        loop {
+            let stream = listener.accept().await?;
+            let state = state.clone();
+            tokio::spawn(async move {
+                if let Err(e) = handle_connection_windows(stream, state).await {
+                    tracing::error!("Connection error: {e}");
+                }
+            });
+        }
     }
     #[allow(unreachable_code)]
     Ok(())
 }
 
 #[cfg(unix)]
-async fn handle_connection(
+async fn handle_connection_unix(
     mut stream: tokio::net::UnixStream,
     state: MonitorState,
 ) -> Result<()> {
-    let msg = recv_message(&mut stream).await?;
+    handle_connection_inner(&mut stream, state).await
+}
+
+#[cfg(windows)]
+async fn handle_connection_windows(
+    mut stream: interprocess::local_socket::tokio::Stream,
+    state: MonitorState,
+) -> Result<()> {
+    handle_connection_inner(&mut stream, state).await
+}
+
+async fn handle_connection_inner<S>(stream: &mut S, state: MonitorState) -> Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let msg = recv_message(&mut *stream).await?;
     tracing::info!(
         "Received {:?} from {} -> {}",
         msg.msg_type,
@@ -195,7 +235,7 @@ async fn handle_connection(
                 status: TaskStatus::Completed,
                 parent_id: Some(msg.id),
             };
-            send_message(&mut stream, &ack).await?;
+            send_message(&mut *stream, &ack).await?;
         }
         MessageType::Pull => {
             let task_info = {
@@ -219,7 +259,7 @@ async fn handle_connection(
                         status: TaskStatus::Completed,
                         parent_id: Some(msg.id),
                     };
-                    send_message(&mut stream, &resp).await?;
+                    send_message(&mut *stream, &resp).await?;
                     return Ok(());
                 }
             };
@@ -244,23 +284,24 @@ async fn handle_connection(
                         status: TaskStatus::Pending,
                         parent_id: Some(msg.id),
                     };
-                    send_message(&mut stream, &resp).await?;
+                    send_message(&mut *stream, &resp).await?;
                     return Ok(());
                 }
             }
 
             let session = state.session.read().await;
             let task_receiver_clone = task_receiver.clone();
+            let mux = mux_bin();
             let snapshot = if let Some(content) = hi_core::history::read_latest_response(&task_receiver_clone, &session.work_dir).await {
                 content
             } else {
                 let pane_id_opt = session.windows.iter()
                     .find(|w| w.name == task_receiver)
                     .and_then(|w| w.tmux_pane_id.clone());
-                
+
                 if let Some(pane_id) = pane_id_opt {
                     tokio::task::spawn_blocking(move || {
-                        std::process::Command::new("tmux")
+                        std::process::Command::new(mux)
                             .args(["capture-pane", "-p", "-t", &pane_id, "-S", "-500"])
                             .output()
                             .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
@@ -282,7 +323,7 @@ async fn handle_connection(
                     status: TaskStatus::Pending,
                     parent_id: Some(msg.id),
                 };
-                send_message(&mut stream, &resp).await?;
+                send_message(&mut *stream, &resp).await?;
                 return Ok(());
             }
 
@@ -352,7 +393,7 @@ async fn handle_connection(
                     status: TaskStatus::Completed,
                     parent_id: Some(msg.id),
                 };
-                send_message(&mut stream, &resp).await?;
+                send_message(&mut *stream, &resp).await?;
             } else {
                 let resp = Message {
                     id: Uuid::new_v4(),
@@ -364,7 +405,7 @@ async fn handle_connection(
                     status: TaskStatus::Pending,
                     parent_id: Some(msg.id),
                 };
-                send_message(&mut stream, &resp).await?;
+                send_message(&mut *stream, &resp).await?;
             }
         }
         MessageType::SessionReady => {

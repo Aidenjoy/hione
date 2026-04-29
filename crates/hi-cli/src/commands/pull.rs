@@ -52,7 +52,22 @@ pub async fn fetch(
     }
     #[cfg(windows)]
     {
-        let _ = (socket_path, target, timeout_secs);
-        anyhow::bail!("Windows named pipe not yet implemented");
+        use interprocess::local_socket::tokio::prelude::LocalSocketStream;
+        use interprocess::local_socket::traits::tokio::Stream;
+        use interprocess::local_socket::{ToNsName, GenericNamespaced};
+
+        // socket_path is "hione_<hash>" format, extract the name part
+        let pipe_name = socket_path.split('\\').last().unwrap_or(socket_path);
+        let name = pipe_name.to_ns_name::<GenericNamespaced>()
+            .map_err(|e| anyhow::anyhow!("Failed to create pipe name: {}", e))?;
+        let mut stream = LocalSocketStream::connect(name)
+            .await
+            .map_err(|e| anyhow::anyhow!("Cannot connect to hi-monitor named pipe: {}", e))?;
+        send_message(&mut stream, &pull_msg).await?;
+        let result = timeout(Duration::from_secs(timeout_secs), recv_message(&mut stream)).await;
+        Ok(match result {
+            Ok(Ok(resp)) if resp.msg_type == MessageType::SnapshotData => Some(resp.content),
+            _ => None,
+        })
     }
 }

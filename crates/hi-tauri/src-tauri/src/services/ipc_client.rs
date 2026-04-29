@@ -93,14 +93,49 @@ impl IpcClient {
 
 #[cfg(windows)]
 impl IpcClient {
-    async fn send_only(&self, _msg: &Message) -> Result<(), AppError> {
-        Err(AppError::IpcError(
-            "IPC over Unix sockets is not supported on Windows".to_string(),
-        ))
+    async fn connect(&self) -> Result<interprocess::local_socket::tokio::Stream, AppError> {
+        use interprocess::local_socket::tokio::prelude::LocalSocketStream;
+        use interprocess::local_socket::traits::tokio::Stream;
+        use interprocess::local_socket::{ToNsName, GenericNamespaced};
+        // socket_path is "hione_<hash>" format, extract the name part
+        let pipe_name = self.socket_path.split('\\').last().unwrap_or(&self.socket_path);
+        let name = pipe_name.to_ns_name::<GenericNamespaced>()
+            .map_err(|e| AppError::IpcError(e.to_string()))?;
+        LocalSocketStream::connect(name)
+            .await
+            .map_err(|e| AppError::IpcError(e.to_string()))
     }
 
-    async fn check_agent_impl(&self, _name: &str) -> Result<bool, AppError> {
-        Ok(false)
+    async fn send_only(&self, msg: &Message) -> Result<(), AppError> {
+        let mut stream = self.connect().await?;
+        hi_core::ipc::send_message(&mut stream, msg).await
+            .map_err(|e| AppError::IpcError(e.to_string()))
+    }
+
+    async fn check_agent_impl(&self, name: &str) -> Result<bool, AppError> {
+        let mut stream = self.connect().await?;
+        let msg = Message {
+            id: Uuid::new_v4(),
+            sender: "desktop".to_string(),
+            receiver: name.to_string(),
+            timestamp: chrono::Utc::now(),
+            content: "".to_string(),
+            msg_type: MessageType::Check,
+            status: TaskStatus::Pending,
+            parent_id: None,
+        };
+        hi_core::ipc::send_message(&mut stream, &msg).await
+            .map_err(|e| AppError::IpcError(e.to_string()))?;
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            hi_core::ipc::recv_message(&mut stream),
+        ).await;
+
+        match result {
+            Ok(Ok(resp)) => Ok(resp.msg_type == MessageType::CheckAck),
+            _ => Ok(false),
+        }
     }
 }
 

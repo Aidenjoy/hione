@@ -1,8 +1,10 @@
 use hi_cli::commands::send_cancel;
 use hi_core::ipc::recv_message;
 use hi_core::message::{MessageType, TaskStatus};
-use tokio::net::UnixListener;
 use uuid::Uuid;
+
+#[cfg(unix)]
+use tokio::net::UnixListener;
 
 #[cfg(unix)]
 #[tokio::test]

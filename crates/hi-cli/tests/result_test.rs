@@ -2,8 +2,10 @@ use hi_cli::commands::submit;
 use hi_core::db::{init_db, insert_message};
 use hi_core::ipc::recv_message;
 use hi_core::message::Message;
-use tokio::net::UnixListener;
 use uuid::Uuid;
+
+#[cfg(unix)]
+use tokio::net::UnixListener;
 
 #[cfg(unix)]
 #[tokio::test]

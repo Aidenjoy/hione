@@ -31,7 +31,17 @@ pub async fn send_to_monitor(socket_path: &str, msg: &Message) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        anyhow::bail!("Windows named pipe not yet implemented");
+        use interprocess::local_socket::tokio::prelude::LocalSocketStream;
+        use interprocess::local_socket::traits::tokio::Stream;
+        use interprocess::local_socket::{ToNsName, GenericNamespaced};
+        // socket_path is "hione_<hash>" format, extract the name part for to_ns_name
+        let pipe_name = socket_path.split('\\').last().unwrap_or(socket_path);
+        let name = pipe_name.to_ns_name::<GenericNamespaced>()
+            .context("Failed to create named pipe name")?;
+        let mut stream = LocalSocketStream::connect(name)
+            .await
+            .context("Cannot connect to hi-monitor named pipe")?;
+        send_message(&mut stream, msg).await?;
     }
     Ok(())
 }

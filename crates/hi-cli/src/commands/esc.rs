@@ -38,7 +38,18 @@ pub async fn send_cancel(socket_path: &str, task_id: Uuid) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        let _ = (socket_path, cancel_msg);
-        anyhow::bail!("Windows named pipe not yet implemented");
+        use interprocess::local_socket::tokio::prelude::LocalSocketStream;
+        use interprocess::local_socket::traits::tokio::Stream;
+        use interprocess::local_socket::{ToNsName, GenericNamespaced};
+
+        // socket_path is "hione_<hash>" format, extract the name part
+        let pipe_name = socket_path.split('\\').last().unwrap_or(socket_path);
+        let name = pipe_name.to_ns_name::<GenericNamespaced>()
+            .map_err(|e| anyhow::anyhow!("Failed to create pipe name: {}", e))?;
+        let mut stream = LocalSocketStream::connect(name)
+            .await
+            .map_err(|e| anyhow::anyhow!("Cannot connect to hi-monitor named pipe: {}", e))?;
+        send_message(&mut stream, &cancel_msg).await?;
+        Ok(())
     }
 }

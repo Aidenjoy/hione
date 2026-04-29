@@ -1,8 +1,10 @@
 use hi_cli::commands::fetch;
 use hi_core::ipc::{recv_message, send_message};
 use hi_core::message::{Message, MessageType, TaskStatus};
-use tokio::net::UnixListener;
 use uuid::Uuid;
+
+#[cfg(unix)]
+use tokio::net::UnixListener;
 
 #[cfg(unix)]
 async fn start_mock(sock: std::path::PathBuf, content: Option<String>) {

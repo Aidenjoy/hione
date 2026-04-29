@@ -1,10 +1,14 @@
 use which::which;
-use std::process::{Command, Stdio};
-use std::io::{BufRead, BufReader};
+use std::process::Command;
 use tauri::{Window, Emitter};
 use serde_json::json;
 use crate::error::AppError;
 use crate::types::ToolInfo;
+
+#[cfg(not(windows))]
+use std::process::Stdio;
+#[cfg(not(windows))]
+use std::io::{BufRead, BufReader};
 
 pub struct KnownTool {
     pub name: &'static str,
@@ -19,10 +23,10 @@ pub const KNOWN_TOOLS: &[KnownTool] = &[
         name:        if cfg!(windows) { "psmux" } else { "tmux" },
         bin_name:    if cfg!(windows) { "psmux" } else { "tmux" },
         install_cmd: if cfg!(target_os = "macos") { "brew install tmux" }
-                     else if cfg!(windows)         { "npm install -g psmux" }
+                     else if cfg!(windows)         { "cargo install psmux" }
                      else                          { "sudo apt install -y tmux" },
         uninstall_cmd: if cfg!(target_os = "macos") { "brew uninstall tmux" }
-                       else if cfg!(windows)         { "npm uninstall -g psmux" }
+                       else if cfg!(windows)         { "cargo uninstall psmux" }
                        else                          { "sudo apt remove -y tmux" },
         version_cmd: if cfg!(windows) { "psmux --version" } else { "tmux -V" },
     },
@@ -463,81 +467,94 @@ pub async fn install_tool_async(name: String, window: Window) -> Result<(), AppE
     }
 
     let tool = tool.unwrap();
-    let cmd_str = tool.install_cmd;
 
-    #[cfg(target_os = "macos")]
-    let mut child = {
-        let resolved_cmd = if cmd_str.starts_with("npm install") {
-            match companion_npm(tool.bin_name) {
-                Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
-                None => resolve_cmd(cmd_str),
-            }
-        } else {
-            resolve_cmd(cmd_str)
-        };
-        Command::new("zsh")
-            .args(["-i", "-l", "-c", &resolved_cmd])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .or_else(|_| {
-                Command::new("sh")
-                    .args(["-i", "-l", "-c", &resolved_cmd])
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-            })?
-    };
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let mut child = {
-        let resolved_cmd = if cmd_str.starts_with("npm install") {
-            match companion_npm(tool.bin_name) {
-                Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
-                None => resolve_cmd(cmd_str),
-            }
-        } else {
-            resolve_cmd(cmd_str)
-        };
-        Command::new("sh")
-            .args(["-i", "-l", "-c", &resolved_cmd])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?
-    };
-
-    // Windows: install natively via cmd
+    // Windows: open a new terminal window to execute command with user's environment
     #[cfg(windows)]
-    let mut child = Command::new("cmd")
-        .args(["/C", cmd_str])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    {
+        let cmd_str = tool.install_cmd;
+        Command::new("cmd")
+            .args(["/C", "start", "cmd", "/K", cmd_str])
+            .spawn()?;
 
-    if let Some(stdout) = child.stdout.take() {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                let _ = window.emit("tool://install-log", json!({ "name": name.clone(), "line": line }));
+        let _ = window.emit("tool://install-log", json!({
+            "name": name.clone(),
+            "line": format!("已在终端窗口打开安装命令: {}", cmd_str)
+        }));
+
+        return Ok(());
+    }
+
+    // Unix platforms
+    #[cfg(not(windows))]
+    {
+        let cmd_str = tool.install_cmd;
+
+        #[cfg(target_os = "macos")]
+        let mut child = {
+            let resolved_cmd = if cmd_str.starts_with("npm install") {
+                match companion_npm(tool.bin_name) {
+                    Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
+                    None => resolve_cmd(cmd_str),
+                }
+            } else {
+                resolve_cmd(cmd_str)
+            };
+            Command::new("zsh")
+                .args(["-i", "-l", "-c", &resolved_cmd])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .or_else(|_| {
+                    Command::new("sh")
+                        .args(["-i", "-l", "-c", &resolved_cmd])
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                })?
+        };
+
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let mut child = {
+            let resolved_cmd = if cmd_str.starts_with("npm install") {
+                match companion_npm(tool.bin_name) {
+                    Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
+                    None => resolve_cmd(cmd_str),
+                }
+            } else {
+                resolve_cmd(cmd_str)
+            };
+            Command::new("sh")
+                .args(["-i", "-l", "-c", &resolved_cmd])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?
+        };
+
+        if let Some(stdout) = child.stdout.take() {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    let _ = window.emit("tool://install-log", json!({ "name": name.clone(), "line": line }));
+                }
             }
         }
-    }
-    
-    if let Some(stderr) = child.stderr.take() {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                let _ = window.emit("tool://install-log", json!({ "name": name.clone(), "line": line }));
+
+        if let Some(stderr) = child.stderr.take() {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    let _ = window.emit("tool://install-log", json!({ "name": name.clone(), "line": line }));
+                }
             }
         }
-    }
-    
-    let status = child.wait()?;
-    
-    if status.success() {
-        Ok(())
-    } else {
-        Err(AppError::CommandFailed(format!("Install failed for {}", name)))
+
+        let status = child.wait()?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(AppError::CommandFailed(format!("Install failed for {}", name)))
+        }
     }
 }
 
@@ -549,80 +566,93 @@ pub async fn uninstall_tool_async(name: String, window: Window) -> Result<(), Ap
     }
 
     let tool = tool.unwrap();
-    let cmd_str = tool.uninstall_cmd;
 
-    #[cfg(target_os = "macos")]
-    let mut child = {
-        let resolved_cmd = if cmd_str.starts_with("npm uninstall") {
-            match companion_npm(tool.bin_name) {
-                Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
-                None => resolve_cmd(cmd_str),
-            }
-        } else {
-            resolve_cmd(cmd_str)
-        };
-        Command::new("zsh")
-            .args(["-i", "-l", "-c", &resolved_cmd])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .or_else(|_| {
-                Command::new("sh")
-                    .args(["-i", "-l", "-c", &resolved_cmd])
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-            })?
-    };
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let mut child = {
-        let resolved_cmd = if cmd_str.starts_with("npm uninstall") {
-            match companion_npm(tool.bin_name) {
-                Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
-                None => resolve_cmd(cmd_str),
-            }
-        } else {
-            resolve_cmd(cmd_str)
-        };
-        Command::new("sh")
-            .args(["-i", "-l", "-c", &resolved_cmd])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?
-    };
-
-    // Windows: uninstall natively via cmd
+    // Windows: open a new terminal window to execute command with user's environment
     #[cfg(windows)]
-    let mut child = Command::new("cmd")
-        .args(["/C", cmd_str])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    {
+        let cmd_str = tool.uninstall_cmd;
+        Command::new("cmd")
+            .args(["/C", "start", "cmd", "/K", cmd_str])
+            .spawn()?;
 
-    if let Some(stdout) = child.stdout.take() {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                let _ = window.emit("tool://uninstall-log", json!({ "name": name.clone(), "line": line }));
+        let _ = window.emit("tool://uninstall-log", json!({
+            "name": name.clone(),
+            "line": format!("已在终端窗口打开卸载命令: {}", cmd_str)
+        }));
+
+        return Ok(());
+    }
+
+    // Unix platforms
+    #[cfg(not(windows))]
+    {
+        let cmd_str = tool.uninstall_cmd;
+
+        #[cfg(target_os = "macos")]
+        let mut child = {
+            let resolved_cmd = if cmd_str.starts_with("npm uninstall") {
+                match companion_npm(tool.bin_name) {
+                    Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
+                    None => resolve_cmd(cmd_str),
+                }
+            } else {
+                resolve_cmd(cmd_str)
+            };
+            Command::new("zsh")
+                .args(["-i", "-l", "-c", &resolved_cmd])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .or_else(|_| {
+                    Command::new("sh")
+                        .args(["-i", "-l", "-c", &resolved_cmd])
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                })?
+        };
+
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let mut child = {
+            let resolved_cmd = if cmd_str.starts_with("npm uninstall") {
+                match companion_npm(tool.bin_name) {
+                    Some(npm_path) => cmd_str.replacen("npm", &npm_path.to_string_lossy(), 1),
+                    None => resolve_cmd(cmd_str),
+                }
+            } else {
+                resolve_cmd(cmd_str)
+            };
+            Command::new("sh")
+                .args(["-i", "-l", "-c", &resolved_cmd])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?
+        };
+
+        if let Some(stdout) = child.stdout.take() {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    let _ = window.emit("tool://uninstall-log", json!({ "name": name.clone(), "line": line }));
+                }
             }
         }
-    }
-    
-    if let Some(stderr) = child.stderr.take() {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                let _ = window.emit("tool://uninstall-log", json!({ "name": name.clone(), "line": line }));
+
+        if let Some(stderr) = child.stderr.take() {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    let _ = window.emit("tool://uninstall-log", json!({ "name": name.clone(), "line": line }));
+                }
             }
         }
-    }
-    
-    let status = child.wait()?;
-    
-    if status.success() {
-        Ok(())
-    } else {
-        Err(AppError::CommandFailed(format!("Uninstall failed for {}", name)))
+
+        let status = child.wait()?;
+
+        if status.success() {
+            Ok(())
+        } else {
+            Err(AppError::CommandFailed(format!("Uninstall failed for {}", name)))
+        }
     }
 }

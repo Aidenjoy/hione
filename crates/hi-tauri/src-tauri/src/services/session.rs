@@ -27,6 +27,10 @@ pub async fn launch_session(
     );
 
     let mut hi_args = vec!["start".to_string()];
+    // On Windows, always force terminal mode (-T) so hi start uses psmux instead
+    // of trying to launch another desktop Tauri instance.
+    #[cfg(windows)]
+    hi_args.push("-T".to_string());
     if auto {
         hi_args.push("-a".to_string());
     }
@@ -138,28 +142,38 @@ pub async fn launch_session(
 
     #[cfg(windows)]
     let sock_check = async move {
-        // Windows 使用命名管道，通过尝试连接来检测
+        // Windows: detect monitor by probing the named pipe.
+        // Read the pipe name from session.json (written by `hi start`) rather than
+        // recomputing it — the hash in socket_path_for is deterministic but reading
+        // from the file is always authoritative.
         use interprocess::local_socket::tokio::prelude::LocalSocketStream;
         use interprocess::local_socket::traits::tokio::Stream;
         use interprocess::local_socket::{ToNsName, GenericNamespaced};
 
-        // Get the expected pipe name based on work_dir
-        let hione_dir = PathBuf::from(&work_dir_owned).join(".hione");
-        let expected_pipe_name = SessionInfo::socket_path_for(&hione_dir);
-        let pipe_name = expected_pipe_name.split('\\').last().unwrap_or(&expected_pipe_name);
+        let session_json_path = PathBuf::from(&work_dir_owned).join(".hione").join("session.json");
 
         for _ in 0..30 {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            // 尝试连接命名管道来检测 monitor 是否启动
-            let name = pipe_name.to_ns_name::<GenericNamespaced>();
-            if let Ok(ns_name) = name {
-                if LocalSocketStream::connect(ns_name).await.is_ok() {
-                    // 连接成功说明 monitor 已启动
-                    let _ = window_clone.emit(
-                        "session://status",
-                        json!({ "connected": true, "work_dir": work_dir_owned }),
-                    );
-                    return;
+
+            // Read socket_path from session.json written by `hi start`
+            let pipe_name_opt = std::fs::read_to_string(&session_json_path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| {
+                    v.get("socket_path")
+                        .and_then(|p| p.as_str())
+                        .map(|s| s.split('\\').last().unwrap_or(s).to_string())
+                });
+
+            if let Some(pipe_name) = pipe_name_opt {
+                if let Ok(ns_name) = pipe_name.to_ns_name::<GenericNamespaced>() {
+                    if LocalSocketStream::connect(ns_name).await.is_ok() {
+                        let _ = window_clone.emit(
+                            "session://status",
+                            json!({ "connected": true, "work_dir": work_dir_owned }),
+                        );
+                        return;
+                    }
                 }
             }
         }
@@ -171,7 +185,7 @@ pub async fn launch_session(
 
     #[cfg(not(windows))]
     let sock_check = async move {
-        let sock_path = PathBuf::from(work_dir).join(".hione").join("hi.sock");
+        let sock_path = PathBuf::from(&work_dir_owned).join(".hione").join("hi.sock");
         for _ in 0..30 {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             if sock_path.exists() {

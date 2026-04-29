@@ -16,8 +16,20 @@ fn mux_bin() -> &'static str {
 
 /// Check if we're inside a multiplexer session
 fn in_mux_session() -> bool {
-    // psmux also sets TMUX environment variable for compatibility
-    env::var("TMUX").is_ok() || env::var("PSMUX_SESSION_NAME").is_ok()
+    if env::var("TMUX").is_ok() || env::var("PSMUX_SESSION_NAME").is_ok() {
+        return true;
+    }
+    // psmux on Windows may not set any env var; probe it directly
+    #[cfg(windows)]
+    {
+        Command::new("psmux")
+            .args(["display-message", "-p", "#{session_name}"])
+            .output()
+            .map(|o| o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    false
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -335,11 +347,18 @@ fn find_bin(name: &str) -> Result<PathBuf> {
     }
 
     let exe = env::current_exe()?;
-    let sibling = exe
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Cannot get exe parent dir"))?
-        .join(name);
+    let parent = exe.parent().ok_or_else(|| anyhow::anyhow!("Cannot get exe parent dir"))?;
 
+    // On Windows, sibling executables have .exe extension
+    #[cfg(windows)]
+    {
+        let with_exe = parent.join(format!("{}.exe", name));
+        if with_exe.exists() {
+            return Ok(with_exe);
+        }
+    }
+
+    let sibling = parent.join(name);
     if sibling.exists() {
         return Ok(sibling);
     }

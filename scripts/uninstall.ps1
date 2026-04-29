@@ -67,27 +67,63 @@ Hi 卸载脚本
     Write-Host $HelpText
 }
 
+function Stop-RunningProcesses {
+    Log-Step 'Stopping running processes...'
+
+    $Processes = @('hi', 'hi-monitor', 'hi-tauri')
+
+    foreach ($Proc in $processes) {
+        $running = Get-Process -Name $Proc -ErrorAction SilentlyContinue
+        if ($running) {
+            Log-Info "Stopping $Proc process..."
+            Stop-Process -Name $Proc -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+        }
+    }
+}
+
 function Remove-Binaries {
     param([string]$InstallPrefix)
-    
+
     Log-Step "Removing binaries from $InstallPrefix..."
-    
+
     $Removed = 0
     $Skipped = 0
-    
+
     foreach ($Binary in $Binaries) {
         $Path = Join-Path $InstallPrefix "$Binary.exe"
-        
+
         if (Test-Path $Path) {
-            Remove-Item -Path $Path -Force
-            Log-Info "Removed: $Path"
-            $Removed++
+            # Try to remove, if failed due to running process, wait and retry
+            try {
+                Remove-Item -Path $Path -Force -ErrorAction Stop
+                Log-Info "Removed: $Path"
+                $Removed++
+            } catch {
+                $errMsg = $_.Exception.Message
+                if ($errMsg -match 'accessed denied|being used') {
+                    Log-Warn "$Binary.exe is in use, attempting to stop process..."
+                    Stop-Process -Name $Binary -Force -ErrorAction SilentlyContinue
+                    Start-Sleep -Seconds 1
+                    try {
+                        Remove-Item -Path $Path -Force
+                        Log-Info "Removed: $Path (after stopping process)"
+                        $Removed++
+                    } catch {
+                        Log-Error "Cannot remove $Path - please stop $Binary manually and retry"
+                        $Skipped++
+                    }
+                } else {
+                    Log-Error "Cannot remove ${Path}: $errMsg"
+                    $Skipped++
+                }
+            }
         } else {
             Log-Info "Skipped (not found): $Path"
             $Skipped++
         }
     }
-    
+
     Write-Host ''
     Log-Info "Removed: $Removed, Skipped: $Skipped"
 }
@@ -145,20 +181,21 @@ function Main {
         Print-Help
         exit 0
     }
-    
+
     $InstallPrefix = if ($Prefix) { $Prefix } else { $DefaultPrefix }
-    
+
     Write-ColorText 'Hi Uninstall Script (Windows)' 'Cyan'
     Log-Info "Platform: Windows"
     Log-Info "Install prefix: $InstallPrefix"
     Write-Host ''
-    
+
+    Stop-RunningProcesses
     Remove-Binaries $InstallPrefix
-    
+
     if (Ask-HionePurge) {
         Purge-HioneDirs
     }
-    
+
     Print-Summary
 }
 

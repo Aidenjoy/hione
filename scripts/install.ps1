@@ -185,29 +185,45 @@ function Build-Desktop {
     Log-Info 'Bundle location: crates\hi-tauri\src-tauri\target\release\bundle\'
 }
 
+function Stop-RunningProcesses {
+    $Processes = @('hi', 'hi-monitor', 'hi-tauri')
+
+    foreach ($Proc in $Processes) {
+        $running = Get-Process -Name $Proc -ErrorAction SilentlyContinue
+        if ($running) {
+            Log-Info "Stopping $Proc process..."
+            Stop-Process -Name $Proc -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 500
+        }
+    }
+}
+
 function Install-Binaries {
     param([string]$InstallPrefix)
-    
+
     Log-Step "Installing binaries to $InstallPrefix..."
-    
+
+    # Stop running processes to avoid file-in-use errors
+    Stop-RunningProcesses
+
     if (-not (Test-Path $InstallPrefix)) {
         New-Item -ItemType Directory -Path $InstallPrefix -Force | Out-Null
     }
-    
+
     foreach ($Binary in $Binaries) {
         $Source = "target\release\$Binary.exe"
         $Dest = Join-Path $InstallPrefix "$Binary.exe"
-        
+
         if (-not (Test-Path $Source)) {
             Log-Error "Binary not found: $Source"
             exit 1
         }
-        
+
         Copy-Item -Path $Source -Destination $Dest -Force
-        
+
         Log-Info "Installed: $Dest"
     }
-    
+
     if ($WithDesktop) {
         $TauriSource = "target\release\hi-tauri.exe"
         if (Test-Path $TauriSource) {

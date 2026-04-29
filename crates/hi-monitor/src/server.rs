@@ -94,7 +94,7 @@ pub async fn run(state: MonitorState) -> Result<()> {
         // Windows uses namespaced pipes, get name from session's socket_path
         let socket_path = state.session.read().await.socket_path.clone();
         // socket_path is "hione_<hash>" format, extract the name part for to_ns_name
-        let pipe_name = socket_path.split('\\').last().unwrap_or(&socket_path);
+        let pipe_name = socket_path.split(['\\', '/']).last().unwrap_or(&socket_path);
         let name = pipe_name.to_ns_name::<GenericNamespaced>()?;
         let listener = ListenerOptions::new()
             .name(name)

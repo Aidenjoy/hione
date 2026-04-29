@@ -160,7 +160,7 @@ pub async fn launch_session(
                 .and_then(|v| {
                     v.get("socket_path")
                         .and_then(|p| p.as_str())
-                        .map(|s| s.split('\\').last().unwrap_or(s).to_string())
+                        .map(|s| s.split(['\\', '/']).last().unwrap_or(s).to_string())
                 });
 
             if let Some(pipe_name) = pipe_name_opt {

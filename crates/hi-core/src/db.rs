@@ -7,8 +7,14 @@ use std::path::Path;
 
 pub async fn init_db(hione_dir: &Path) -> HiResult<SqlitePool> {
     let db_path = hione_dir.join("hi.db");
-    let url = format!("sqlite://{}?mode=rwc", db_path.display());
-    let pool = SqlitePool::connect(&url).await?;
+    
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+    let options = SqliteConnectOptions::new()
+        .filename(&db_path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal);
+    
+    let pool = SqlitePool::connect_with(options).await?;
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS messages (

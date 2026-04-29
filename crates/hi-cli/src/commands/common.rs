@@ -63,19 +63,29 @@ pub async fn send_to_monitor(socket_path: &str, msg: &Message) -> Result<()> {
 }
 
 fn is_stale_socket_error(e: &anyhow::Error) -> bool {
-    // anyhow::Error::to_string() only returns the top-level context.
-    // We need to check the full error chain to find the underlying OS error.
     for cause in e.chain() {
+        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+            match io_err.kind() {
+                std::io::ErrorKind::ConnectionRefused |
+                std::io::ErrorKind::NotFound |
+                std::io::ErrorKind::ConnectionAborted => return true,
+                _ => {}
+            }
+            // On Windows, error 2 is "file not found" which is used for missing pipes.
+            #[cfg(windows)]
+            if io_err.raw_os_error() == Some(2) {
+                return true;
+            }
+        }
+        
         let s = cause.to_string();
-        // ECONNREFUSED (61 macOS / 111 Linux) = socket exists but nobody listening
-        // ENOENT      (2)                     = socket file gone entirely
-        // Windows named pipe not found        = OS error 2 on pipe connect
         if s.contains("os error 61")   // ECONNREFUSED macOS
             || s.contains("os error 111") // ECONNREFUSED Linux
             || s.contains("os error 2")   // ENOENT / pipe not found
             || s.contains("Connection refused")
             || s.contains("No such file or directory")
             || s.contains("named pipe")
+            || s.contains("系统找不到指定的文件") // Windows Chinese
         {
             return true;
         }
@@ -105,10 +115,17 @@ async fn restart_monitor(socket_path: &str) -> Result<()> {
 
     // Locate and spawn hi-monitor
     let monitor_bin = locate_monitor_bin()?;
-    std::process::Command::new(&monitor_bin)
-        .arg("--hione-dir")
-        .arg(&hione_dir)
-        .spawn()
+    let mut cmd = std::process::Command::new(&monitor_bin);
+    cmd.arg("--hione-dir").arg(&hione_dir);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    cmd.spawn()
         .with_context(|| format!("Failed to spawn hi-monitor at {}", monitor_bin.display()))?;
     Ok(())
 }
@@ -143,7 +160,7 @@ async fn try_send(socket_path: &str, msg: &Message) -> Result<()> {
         use interprocess::local_socket::tokio::prelude::LocalSocketStream;
         use interprocess::local_socket::traits::tokio::Stream;
         use interprocess::local_socket::{ToNsName, GenericNamespaced};
-        let pipe_name = socket_path.split('\\').last().unwrap_or(socket_path);
+        let pipe_name = socket_path.split(['\\', '/']).last().unwrap_or(socket_path);
         let name = pipe_name.to_ns_name::<GenericNamespaced>()
             .context("Failed to create named pipe name")?;
         let mut stream = LocalSocketStream::connect(name)

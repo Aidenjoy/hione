@@ -98,7 +98,7 @@ impl IpcClient {
         use interprocess::local_socket::traits::tokio::Stream;
         use interprocess::local_socket::{ToNsName, GenericNamespaced};
         // socket_path is "hione_<hash>" format, extract the name part
-        let pipe_name = self.socket_path.split('\\').last().unwrap_or(&self.socket_path);
+        let pipe_name = self.socket_path.split(['\\', '/']).last().unwrap_or(&self.socket_path);
         let name = pipe_name.to_ns_name::<GenericNamespaced>()
             .map_err(|e| AppError::IpcError(e.to_string()))?;
         LocalSocketStream::connect(name)

@@ -43,7 +43,7 @@ pub async fn probe(socket_path: &str, target: &str, timeout_secs: u64) -> Result
         use interprocess::local_socket::{ToNsName, GenericNamespaced};
 
         // socket_path is "hione_<hash>" format, extract the name part
-        let pipe_name = socket_path.split('\\').last().unwrap_or(socket_path);
+        let pipe_name = socket_path.split(['\\', '/']).last().unwrap_or(socket_path);
         let name = pipe_name.to_ns_name::<GenericNamespaced>()
             .map_err(|e| anyhow::anyhow!("Failed to create pipe name: {}", e))?;
         let mut stream = LocalSocketStream::connect(name)

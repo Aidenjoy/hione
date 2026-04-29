@@ -236,10 +236,17 @@ pub async fn run(
 
     // 6. 启动 monitor 守护进程
     let monitor_bin = find_bin("hi-monitor")?;
-    let monitor_child = Command::new(&monitor_bin)
-        .arg("--hione-dir")
-        .arg(&hione_dir)
-        .spawn()
+    let mut monitor_cmd = Command::new(&monitor_bin);
+    monitor_cmd.arg("--hione-dir").arg(&hione_dir);
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        monitor_cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let monitor_child = monitor_cmd.spawn()
         .context("Failed to start hi-monitor")?;
 
     let monitor_pid = monitor_child.id();

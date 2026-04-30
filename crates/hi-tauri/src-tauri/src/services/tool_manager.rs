@@ -1,13 +1,9 @@
 use which::which;
 use std::process::Command;
-use tauri::Window;
+use tauri::{Window, Emitter};
+use serde_json::json;
 use crate::error::AppError;
 use crate::types::ToolInfo;
-
-#[cfg(not(windows))]
-use tauri::Emitter;
-#[cfg(not(windows))]
-use serde_json::json;
 
 #[cfg(not(windows))]
 use std::process::Stdio;
@@ -493,6 +489,52 @@ pub fn detect_all_tools() -> Vec<ToolInfo> {
         .collect()
 }
 
+/// Find binary path after installation, searching WinGet packages directory
+#[cfg(windows)]
+fn find_binary_after_install(name: &str) -> Option<std::path::PathBuf> {
+    // First try the regular find_binary which checks PATH and where.exe
+    if let Some(path) = find_binary(name) {
+        return Some(path);
+    }
+
+    // Then check WinGet Packages directory
+    if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+        let winget_base = std::path::PathBuf::from(&localappdata)
+            .join("Microsoft")
+            .join("WinGet")
+            .join("Packages");
+        if winget_base.exists() {
+            if let Ok(entries) = std::fs::read_dir(&winget_base) {
+                for entry in entries.flatten() {
+                    let pkg_dir = entry.path();
+                    let exe_path = pkg_dir.join(format!("{}.exe", name));
+                    if exe_path.exists() {
+                        return Some(exe_path);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Get tool version by running version command
+#[cfg(windows)]
+fn get_tool_version(name: &str) -> Option<String> {
+    let bin_path = find_binary_after_install(name)?;
+    let bin_path_quoted = format!("\"{}\"", bin_path.to_string_lossy());
+
+    let tool = KNOWN_TOOLS.iter().find(|t| t.bin_name == name)?;
+    let cmd_to_run = tool.version_cmd.replace(name, &bin_path_quoted);
+
+    Command::new("powershell")
+        .args(["-Command", &cmd_to_run])
+        .output()
+        .ok()
+        .and_then(|o| parse_version_from_output(&o.stdout, &o.stderr))
+}
+
 #[allow(unused_variables)]
 pub async fn install_tool_async(name: String, window: Window) -> Result<(), AppError> {
     let tool = KNOWN_TOOLS.iter().find(|t| t.name == name);
@@ -503,16 +545,103 @@ pub async fn install_tool_async(name: String, window: Window) -> Result<(), AppE
 
     let tool = tool.unwrap();
 
-    // Windows: open a new PowerShell terminal window to execute command with user's environment
+    // Windows: run install command, then add to PATH if needed
     #[cfg(windows)]
     {
-        let cmd_str = tool.install_cmd;
-        Command::new("powershell")
-            .args(["-Command", &format!("Start-Process powershell -ArgumentList '-NoExit','-Command','{}'", cmd_str)])
-            .spawn()?;
+        let bin_name = tool.bin_name;
+        let install_cmd = tool.install_cmd;
 
-        // No emit needed - user sees terminal window open, and onSuccess shows "安装成功！"
-        return Ok(());
+        // Emit install command
+        let _ = window.emit("tool://install-log", json!({
+            "name": name.clone(),
+            "line": format!("执行安装命令: {}", install_cmd)
+        }));
+
+        // Run winget install with auto-accept flags
+        let install_result = if install_cmd.starts_with("winget install") {
+            let package_name = install_cmd.split_whitespace().nth(2).unwrap_or("");
+            Command::new("winget")
+                .args(["install", package_name, "--accept-package-agreements", "--accept-source-agreements"])
+                .output()
+        } else {
+            Command::new("powershell")
+                .args(["-Command", install_cmd])
+                .output()
+        };
+
+        match install_result {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                for line in stdout.lines() {
+                    let _ = window.emit("tool://install-log", json!({ "name": name.clone(), "line": line }));
+                }
+
+                // Find the installed binary path
+                let bin_path = find_binary_after_install(bin_name);
+                if let Some(path) = bin_path {
+                    let path_dir = path.parent()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+
+                    // Check if path_dir is already in User PATH (permanent)
+                    let user_path_result = Command::new("powershell")
+                        .args(["-Command", "[Environment]::GetEnvironmentVariable('PATH', 'User')"])
+                        .output();
+
+                    let user_path = user_path_result
+                        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                        .unwrap_or_default();
+
+                    if !user_path.contains(&path_dir) {
+                        // Add to user PATH permanently
+                        let ps_script = format!(
+                            "$currentPath = [Environment]::GetEnvironmentVariable('PATH', 'User'); \
+                             [Environment]::SetEnvironmentVariable('PATH', $currentPath + ';' + '{}', 'User'); \
+                             Write-Host '已将 {} 添加到 PATH'",
+                            path_dir.replace('\\', "\\\\"),
+                            path_dir.replace('\\', "\\\\")
+                        );
+                        let _ = Command::new("powershell")
+                            .args(["-Command", &ps_script])
+                            .output();
+
+                        let _ = window.emit("tool://install-log", json!({
+                            "name": name.clone(),
+                            "line": format!("已将 {} 添加到 PATH，请重启终端后使用", path_dir)
+                        }));
+                    } else {
+                        let _ = window.emit("tool://install-log", json!({
+                            "name": name.clone(),
+                            "line": format!("{} 已在 PATH 中，请重启终端后使用", path_dir)
+                        }));
+                    }
+
+                    // Get and show version
+                    if let Some(version) = get_tool_version(bin_name) {
+                        let _ = window.emit("tool://install-log", json!({
+                            "name": name.clone(),
+                            "line": format!("{} 安装成功，版本: {}", name, version)
+                        }));
+                    }
+                } else {
+                    let _ = window.emit("tool://install-log", json!({
+                        "name": name.clone(),
+                        "line": format!("{} 安装完成，请重启终端后验证", name)
+                    }));
+                }
+                Ok(())
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                for line in stderr.lines() {
+                    let _ = window.emit("tool://install-log", json!({ "name": name.clone(), "line": line }));
+                }
+                Err(AppError::CommandFailed(format!("Install failed for {}", name)))
+            }
+            Err(e) => {
+                Err(AppError::CommandFailed(format!("Install command failed: {}", e)))
+            }
+        }
     }
 
     // Unix platforms
@@ -599,15 +728,50 @@ pub async fn uninstall_tool_async(name: String, window: Window) -> Result<(), Ap
 
     let tool = tool.unwrap();
 
-    // Windows: open a new PowerShell terminal window to execute command with user's environment
+    // Windows: run uninstall command and log output
     #[cfg(windows)]
     {
-        let cmd_str = tool.uninstall_cmd;
-        Command::new("powershell")
-            .args(["-Command", &format!("Start-Process powershell -ArgumentList '-NoExit','-Command','{}'", cmd_str)])
-            .spawn()?;
-        // No emit needed - user sees terminal window open, and onSuccess shows "卸载成功！"
-        return Ok(());
+        let uninstall_cmd = tool.uninstall_cmd;
+
+        let _ = window.emit("tool://uninstall-log", json!({
+            "name": name.clone(),
+            "line": format!("执行卸载命令: {}", uninstall_cmd)
+        }));
+
+        let uninstall_result = if uninstall_cmd.starts_with("winget uninstall") {
+            let package_name = uninstall_cmd.split_whitespace().nth(2).unwrap_or("");
+            Command::new("winget")
+                .args(["uninstall", package_name, "--silent"])
+                .output()
+        } else {
+            Command::new("powershell")
+                .args(["-Command", uninstall_cmd])
+                .output()
+        };
+
+        match uninstall_result {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                for line in stdout.lines() {
+                    let _ = window.emit("tool://uninstall-log", json!({ "name": name.clone(), "line": line }));
+                }
+                let _ = window.emit("tool://uninstall-log", json!({
+                    "name": name.clone(),
+                    "line": format!("{} 已卸载", name)
+                }));
+                Ok(())
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                for line in stderr.lines() {
+                    let _ = window.emit("tool://uninstall-log", json!({ "name": name.clone(), "line": line }));
+                }
+                Err(AppError::CommandFailed(format!("Uninstall failed for {}", name)))
+            }
+            Err(e) => {
+                Err(AppError::CommandFailed(format!("Uninstall command failed: {}", e)))
+            }
+        }
     }
 
     // Unix platforms

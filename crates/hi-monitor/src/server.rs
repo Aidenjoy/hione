@@ -143,8 +143,10 @@ where
 
     match msg.msg_type {
         MessageType::Task => {
-            let mut queues = state.queues.write().await;
-            queues.enqueue(&msg.receiver, msg.clone());
+            {
+                let mut queues = state.queues.write().await;
+                queues.enqueue(&msg.receiver, msg.clone());
+            }
             tracing::info!("Enqueued task {} for '{}'", msg.id, msg.receiver);
 
             // 先 reload session 文件，确保获取最新的 tmux_pane_id
@@ -153,22 +155,30 @@ where
                 tracing::warn!("Failed to reload session before task dispatch: {e}");
             }
 
-            let session = state.session.read().await;
-            let pane_id = session
-                .windows
-                .iter()
-                .find(|w| w.name == msg.receiver)
-                .and_then(|w| w.tmux_pane_id.clone());
-
-            if let Some(pane_id) = pane_id {
+            let (pane_id, peers, work_dir) = {
+                let session = state.session.read().await;
+                let pane_id = session
+                    .windows
+                    .iter()
+                    .find(|w| w.name == msg.receiver)
+                    .and_then(|w| w.tmux_pane_id.clone());
                 let peers: Vec<String> = session
                     .windows
                     .iter()
                     .filter(|w| !w.is_main && w.name != msg.receiver)
                     .map(|w| w.name.clone())
                     .collect();
+                (pane_id, peers, session.work_dir.clone())
+            };
 
-                let work_dir = session.work_dir.clone();
+            if let Some(pane_id) = pane_id {
+                let baseline = if supported_tool_name(&msg.receiver).is_some() {
+                    hi_core::history::read_latest_response(&msg.receiver, &work_dir)
+                        .await
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
 
                 let envelope =
                     format_task_envelope(&msg.id, &msg.sender, &msg.receiver, &msg.content, &peers);
@@ -181,16 +191,11 @@ where
                     dispatch_times.insert(msg.receiver.clone(), Instant::now());
                     tracing::info!("Task {} pending, waiting for DONE marker", msg.id);
 
-                    // 记录结构化存储基线（异步，不阻塞主流程）
-                    let baselines = state.response_baselines.clone();
-                    let window_name = msg.receiver.clone();
-                    tokio::spawn(async move {
-                        let baseline =
-                            hi_core::history::read_latest_response(&window_name, &work_dir)
-                                .await
-                                .unwrap_or_default();
-                        baselines.write().await.insert(window_name, baseline);
-                    });
+                    state
+                        .response_baselines
+                        .write()
+                        .await
+                        .insert(msg.receiver.clone(), baseline);
                 }
             } else {
                 tracing::warn!(

@@ -166,11 +166,20 @@ async fn detect_task_done_structured(state: MonitorState) {
                 Some(c) => c,
             };
 
-            // 提取基线之后新增的内容
-            let result = if current.len() > baseline.len() && current.starts_with(&baseline) {
+            // 提取基线之后新增的内容。只有看到当前 task 的 DONE marker 才认为完成。
+            let delta = if current.len() > baseline.len() && current.starts_with(&baseline) {
                 current[baseline.len()..].trim().to_string()
             } else {
                 current.trim().to_string()
+            };
+
+            let Some(result) = extract_result(&delta, task_id) else {
+                tracing::debug!(
+                    "Structured storage changed for task {} from '{}', waiting for DONE marker",
+                    task_id,
+                    receiver
+                );
+                continue;
             };
 
             if result.is_empty() {

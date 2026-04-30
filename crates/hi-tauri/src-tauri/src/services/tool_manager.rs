@@ -1,9 +1,13 @@
 use which::which;
 use std::process::Command;
-use tauri::{Window, Emitter};
-use serde_json::json;
+use tauri::Window;
 use crate::error::AppError;
 use crate::types::ToolInfo;
+
+#[cfg(not(windows))]
+use tauri::Emitter;
+#[cfg(not(windows))]
+use serde_json::json;
 
 #[cfg(not(windows))]
 use std::process::Stdio;
@@ -461,6 +465,7 @@ pub fn detect_all_tools() -> Vec<ToolInfo> {
         .collect()
 }
 
+#[allow(unused_variables)]
 pub async fn install_tool_async(name: String, window: Window) -> Result<(), AppError> {
     let tool = KNOWN_TOOLS.iter().find(|t| t.name == name);
 
@@ -478,11 +483,7 @@ pub async fn install_tool_async(name: String, window: Window) -> Result<(), AppE
             .args(["-Command", &format!("Start-Process powershell -ArgumentList '-NoExit','-Command','{}'", cmd_str)])
             .spawn()?;
 
-        let _ = window.emit("tool://install-log", json!({
-            "name": name.clone(),
-            "line": format!("已在终端窗口打开安装命令: {}", cmd_str)
-        }));
-
+        // No emit needed - user sees terminal window open, and onSuccess shows "安装成功！"
         return Ok(());
     }
 
@@ -560,6 +561,7 @@ pub async fn install_tool_async(name: String, window: Window) -> Result<(), AppE
     }
 }
 
+#[allow(unused_variables)]
 pub async fn uninstall_tool_async(name: String, window: Window) -> Result<(), AppError> {
     let tool = KNOWN_TOOLS.iter().find(|t| t.name == name);
 
@@ -576,12 +578,7 @@ pub async fn uninstall_tool_async(name: String, window: Window) -> Result<(), Ap
         Command::new("powershell")
             .args(["-Command", &format!("Start-Process powershell -ArgumentList '-NoExit','-Command','{}'", cmd_str)])
             .spawn()?;
-
-        let _ = window.emit("tool://uninstall-log", json!({
-            "name": name.clone(),
-            "line": format!("已在终端窗口打开卸载命令: {}", cmd_str)
-        }));
-
+        // No emit needed - user sees terminal window open, and onSuccess shows "卸载成功！"
         return Ok(());
     }
 

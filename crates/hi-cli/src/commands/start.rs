@@ -496,6 +496,8 @@ fn start_mux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &P
             .status()
             .context("Failed to set mux pane label")?;
 
+        configure_mux_pane_title(mux, pane_id, &label)?;
+
         let launch_command = &session.windows[i].launch_command;
         // 为子窗口追加 ; exit，为主窗口追加 ; tmux kill-session，确保 AI 退出时自动清理 tmux
         let full_launch_cmd = if i == 0 {
@@ -557,17 +559,33 @@ fn start_mux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &P
     Ok(())
 }
 
+fn configure_mux_pane_title(mux: &str, pane_id: &str, label: &str) -> Result<()> {
+    if cfg!(windows) {
+        Command::new(mux)
+            .args(["select-pane", "-t", pane_id, "-T", label])
+            .status()
+            .context("Failed to set psmux pane title")?;
+    }
+
+    Ok(())
+}
+
 fn configure_mux_pane_borders(mux: &str) -> Result<()> {
     if cfg!(windows) {
-        // psmux 3.3.4 does not document pane-border-status or pane-border-format.
-        // Clear stale values from earlier versions of hi without failing on
-        // unknown options.
+        // Clear stale session/global values from earlier hi versions that used
+        // tmux-style user options and style fragments Windows psmux rendered
+        // literally.
         let _ = Command::new(mux)
             .args(["set-option", "-q", "-u", "pane-border-status"])
             .status();
         let _ = Command::new(mux)
             .args(["set-option", "-q", "-u", "pane-border-format"])
             .status();
+
+        Command::new(mux)
+            .args(["set-window-option", "pane-border-status", "top"])
+            .status()
+            .context("Failed to set psmux pane-border-status")?;
         return Ok(());
     }
 
@@ -581,6 +599,10 @@ fn configure_mux_pane_borders(mux: &str) -> Result<()> {
 
 fn configure_mux_border_format(mux: &str) -> Result<()> {
     if cfg!(windows) {
+        Command::new(mux)
+            .args(["set-window-option", "pane-border-format", "#T"])
+            .status()
+            .context("Failed to set psmux pane-border-format")?;
         return Ok(());
     }
 

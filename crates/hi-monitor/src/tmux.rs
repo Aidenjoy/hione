@@ -56,9 +56,10 @@ fn deliver_to_pane_unix(pane_id: &str, bracketed: &str) -> io::Result<()> {
 
 #[cfg(windows)]
 fn deliver_to_pane_windows(pane_id: &str, content: &str) -> io::Result<()> {
-    // psmux documents -p as paste text. That fits hi's multi-line task envelope
-    // better than literal key input.
-    run_mux_command(["send-keys", "-p", "-t", pane_id, content])?;
+    // psmux 3.3.4 accepts -p with -t, but observed builds paste to the active
+    // pane. Literal send-keys honors -t, so use it without bracketed-paste
+    // escapes for Windows.
+    run_mux_command(["send-keys", "-t", pane_id, "-l", content])?;
 
     std::thread::sleep(Duration::from_millis(300));
     run_mux_command(["send-keys", "-t", pane_id, "Enter"])?;
@@ -89,9 +90,9 @@ fn windows_delivery_commands(pane_id: &str, content: &str) -> Vec<Vec<String>> {
     vec![
         vec![
             "send-keys".to_string(),
-            "-p".to_string(),
             "-t".to_string(),
             pane_id.to_string(),
+            "-l".to_string(),
             content.to_string(),
         ],
         vec![
@@ -108,14 +109,14 @@ mod tests {
     use super::windows_delivery_commands;
 
     #[test]
-    fn windows_delivery_uses_targeted_paste_send_keys() {
+    fn windows_delivery_uses_targeted_literal_send_keys() {
         let commands = windows_delivery_commands("%2", "hello\nworld");
 
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0][0], "send-keys");
-        assert_eq!(commands[0][1], "-p");
-        assert_eq!(commands[0][2], "-t");
-        assert_eq!(commands[0][3], "%2");
+        assert_eq!(commands[0][1], "-t");
+        assert_eq!(commands[0][2], "%2");
+        assert_eq!(commands[0][3], "-l");
         assert!(commands[0][4].contains("hello\nworld"));
         assert!(!commands[0][4].contains("\x1b[200~"));
 

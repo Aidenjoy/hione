@@ -519,19 +519,9 @@ fn start_mux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &P
         }
     }
 
-    Command::new(mux)
-        .args(["set-option", "pane-border-status", "top"])
-        .status()
-        .context("Failed to set mux pane-border-status")?;
+    configure_mux_pane_borders(mux)?;
 
-    Command::new(mux)
-        .args([
-            "set-option",
-            "pane-border-format",
-            "#[bg=colour235,fg=colour214,bold] #{@hi_label} #[default]",
-        ])
-        .status()
-        .context("Failed to set mux pane-border-format")?;
+    configure_mux_border_format(mux)?;
 
     Command::new(mux)
         .args(["set-option", "pane-border-style", "fg=colour240"])
@@ -564,6 +554,45 @@ fn start_mux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &P
 
     println!("Hi session started in {} mode", mux);
     println!("Panes: {}", names.join(", "));
+    Ok(())
+}
+
+fn configure_mux_pane_borders(mux: &str) -> Result<()> {
+    if cfg!(windows) {
+        // psmux 3.3.4 does not document pane-border-status or pane-border-format.
+        // Clear stale values from earlier versions of hi without failing on
+        // unknown options.
+        let _ = Command::new(mux)
+            .args(["set-option", "-q", "-u", "pane-border-status"])
+            .status();
+        let _ = Command::new(mux)
+            .args(["set-option", "-q", "-u", "pane-border-format"])
+            .status();
+        return Ok(());
+    }
+
+    Command::new(mux)
+        .args(["set-option", "pane-border-status", "top"])
+        .status()
+        .context("Failed to set mux pane-border-status")?;
+
+    Ok(())
+}
+
+fn configure_mux_border_format(mux: &str) -> Result<()> {
+    if cfg!(windows) {
+        return Ok(());
+    }
+
+    Command::new(mux)
+        .args([
+            "set-option",
+            "pane-border-format",
+            "#[bg=colour235,fg=colour214,bold] #{@hi_label} #[default]",
+        ])
+        .status()
+        .context("Failed to set mux pane-border-format")?;
+
     Ok(())
 }
 

@@ -28,7 +28,7 @@ pub const KNOWN_TOOLS: &[KnownTool] = &[
         uninstall_cmd: if cfg!(target_os = "macos") { "brew uninstall tmux" }
                        else if cfg!(windows)         { "winget uninstall psmux" }
                        else                          { "sudo apt remove -y tmux" },
-        version_cmd: if cfg!(windows) { "psmux --version" } else { "tmux -V" },
+        version_cmd: if cfg!(windows) { "psmux version" } else { "tmux -V" },
     },
     KnownTool {
         name: "claude",
@@ -523,13 +523,13 @@ fn find_binary_after_install(name: &str) -> Option<std::path::PathBuf> {
 #[cfg(windows)]
 fn get_tool_version(name: &str) -> Option<String> {
     let bin_path = find_binary_after_install(name)?;
-    let bin_path_quoted = format!("\"{}\"", bin_path.to_string_lossy());
 
     let tool = KNOWN_TOOLS.iter().find(|t| t.bin_name == name)?;
-    let cmd_to_run = tool.version_cmd.replace(name, &bin_path_quoted);
+    // Use PowerShell call operator `&` to execute quoted path with arguments
+    let ps_cmd = format!("& '{}' {}", bin_path.to_string_lossy(), tool.version_cmd.replace(name, ""));
 
     Command::new("powershell")
-        .args(["-Command", &cmd_to_run])
+        .args(["-Command", &ps_cmd])
         .output()
         .ok()
         .and_then(|o| parse_version_from_output(&o.stdout, &o.stderr))
@@ -621,6 +621,11 @@ pub async fn install_tool_async(name: String, window: Window) -> Result<(), AppE
                         let _ = window.emit("tool://install-log", json!({
                             "name": name.clone(),
                             "line": format!("{} 安装成功，版本: {}", name, version)
+                        }));
+                    } else {
+                        let _ = window.emit("tool://install-log", json!({
+                            "name": name.clone(),
+                            "line": format!("{} 安装成功", name)
                         }));
                     }
                 } else {

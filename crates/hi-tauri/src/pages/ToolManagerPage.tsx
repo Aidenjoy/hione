@@ -20,6 +20,7 @@ function ToolRow({ tool }: { tool: ToolInfo }) {
   const [showLogs, setShowLogs] = useState(false)
   const [isUpdating, setIsUpdating] = useState(false)
   const logEndRef = useRef<HTMLDivElement>(null)
+  const lastLogRef = useRef<string>('')
   const queryClient = useQueryClient()
 
   const scrollToBottom = () => {
@@ -35,12 +36,20 @@ function ToolRow({ tool }: { tool: ToolInfo }) {
     const setupListener = async () => {
       const u1 = await listen<{ name: string; line: string }>('tool://install-log', (event) => {
         if (event.payload.name === tool.name) {
-          setLogs(prev => [...prev, event.payload.line])
+          // Deduplicate logs (React StrictMode causes double events)
+          if (lastLogRef.current !== event.payload.line) {
+            lastLogRef.current = event.payload.line
+            setLogs(prev => [...prev, event.payload.line])
+          }
         }
       })
       const u2 = await listen<{ name: string; line: string }>('tool://uninstall-log', (event) => {
         if (event.payload.name === tool.name) {
-          setLogs(prev => [...prev, event.payload.line])
+          // Deduplicate logs (React StrictMode causes double events)
+          if (lastLogRef.current !== event.payload.line) {
+            lastLogRef.current = event.payload.line
+            setLogs(prev => [...prev, event.payload.line])
+          }
         }
       })
       unlisten = () => {
@@ -59,9 +68,10 @@ function ToolRow({ tool }: { tool: ToolInfo }) {
     onMutate: () => {
       setLogs([`$ 开始安装 ${tool.name}...`])
       setShowLogs(true)
+      lastLogRef.current = ''
     },
     onSuccess: async () => {
-      setLogs(prev => [...prev, '安装成功！'])
+      // Don't add "安装成功！" - backend already emits completion message
       await queryClient.invalidateQueries({ queryKey: ['tools'] })
       await queryClient.refetchQueries({ queryKey: ['tools'] })
     },
@@ -75,9 +85,10 @@ function ToolRow({ tool }: { tool: ToolInfo }) {
     onMutate: () => {
       setLogs([`$ 开始卸载 ${tool.name}...`])
       setShowLogs(true)
+      lastLogRef.current = ''
     },
     onSuccess: async () => {
-      setLogs(prev => [...prev, '卸载成功！'])
+      // Don't add "卸载成功！" - backend already emits completion message
       await queryClient.invalidateQueries({ queryKey: ['tools'] })
       await queryClient.refetchQueries({ queryKey: ['tools'] })
     },

@@ -1,29 +1,23 @@
 use anyhow::Result;
 use hi_core::{
     db::insert_message,
+    history::supported_tool_name,
     ipc::{recv_message, send_message},
     message::{Message, MessageType, TaskStatus},
-    protocol::{format_task_envelope, format_result_envelope, extract_result},
+    protocol::{extract_result, format_result_envelope, format_task_envelope},
     session::SessionInfo,
 };
 use sqlx::SqlitePool;
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::Arc,
-    time::Instant,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::{task_queue::TaskQueueMap, tmux::deliver_to_pane};
+use crate::{
+    task_queue::TaskQueueMap,
+    tmux::{capture_pane, deliver_to_pane},
+};
 
 pub const PULL_COOLDOWN_SECS: u64 = 60;
-
-/// Get the multiplexer binary name for the current platform
-fn mux_bin() -> &'static str {
-    if cfg!(windows) { "psmux" } else { "tmux" }
-}
 
 #[derive(Clone)]
 pub struct MonitorState {
@@ -89,16 +83,17 @@ pub async fn run(state: MonitorState) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        use interprocess::local_socket::{ListenerOptions, ToNsName, GenericNamespaced};
         use interprocess::local_socket::traits::tokio::Listener;
+        use interprocess::local_socket::{GenericNamespaced, ListenerOptions, ToNsName};
         // Windows uses namespaced pipes, get name from session's socket_path
         let socket_path = state.session.read().await.socket_path.clone();
         // socket_path is "hione_<hash>" format, extract the name part for to_ns_name
-        let pipe_name = socket_path.split(['\\', '/']).last().unwrap_or(&socket_path);
+        let pipe_name = socket_path
+            .split(['\\', '/'])
+            .last()
+            .unwrap_or(&socket_path);
         let name = pipe_name.to_ns_name::<GenericNamespaced>()?;
-        let listener = ListenerOptions::new()
-            .name(name)
-            .create_tokio()?;
+        let listener = ListenerOptions::new().name(name).create_tokio()?;
         tracing::info!("IPC server listening on named pipe '{}'", pipe_name);
 
         loop {
@@ -175,7 +170,8 @@ where
 
                 let work_dir = session.work_dir.clone();
 
-                let envelope = format_task_envelope(&msg.id, &msg.sender, &msg.receiver, &msg.content, &peers);
+                let envelope =
+                    format_task_envelope(&msg.id, &msg.sender, &msg.receiver, &msg.content, &peers);
                 if let Err(e) = deliver_to_pane(&pane_id, &envelope) {
                     tracing::warn!("Failed to deliver task to tmux pane {}: {}", pane_id, e);
                 } else {
@@ -189,23 +185,23 @@ where
                     let baselines = state.response_baselines.clone();
                     let window_name = msg.receiver.clone();
                     tokio::spawn(async move {
-                        let baseline = hi_core::history::read_latest_response(&window_name, &work_dir)
-                            .await
-                            .unwrap_or_default();
+                        let baseline =
+                            hi_core::history::read_latest_response(&window_name, &work_dir)
+                                .await
+                                .unwrap_or_default();
                         baselines.write().await.insert(window_name, baseline);
                     });
                 }
             } else {
-                tracing::warn!("No tmux_pane_id found for '{}', task remains in queue", msg.receiver);
+                tracing::warn!(
+                    "No tmux_pane_id found for '{}', task remains in queue",
+                    msg.receiver
+                );
             }
         }
         MessageType::Result => {
             let task_id = msg.parent_id.unwrap_or(Uuid::nil());
-            tracing::info!(
-                "Task {} completed by '{}'",
-                task_id,
-                msg.sender
-            );
+            tracing::info!("Task {} completed by '{}'", task_id, msg.sender);
             // 将已完成的任务从队列移除（sender 就是完成任务的 window）
             let mut queues = state.queues.write().await;
             queues.pop_next(&msg.sender);
@@ -218,12 +214,9 @@ where
         }
         MessageType::Check => {
             let session = state.session.read().await;
-            let window_exists = session
-                .windows
-                .iter()
-                .any(|w| w.name == msg.receiver);
+            let window_exists = session.windows.iter().any(|w| w.name == msg.receiver);
             if !window_exists {
-                return Ok(())
+                return Ok(());
             }
             let ack = Message {
                 id: Uuid::new_v4(),
@@ -291,22 +284,24 @@ where
 
             let session = state.session.read().await;
             let task_receiver_clone = task_receiver.clone();
-            let mux = mux_bin();
-            let snapshot = if let Some(content) = hi_core::history::read_latest_response(&task_receiver_clone, &session.work_dir).await {
+            let snapshot = if let Some(content) =
+                hi_core::history::read_latest_response(&task_receiver_clone, &session.work_dir)
+                    .await
+            {
                 content
+            } else if supported_tool_name(&task_receiver).is_some() {
+                String::new()
             } else {
-                let pane_id_opt = session.windows.iter()
+                let pane_id_opt = session
+                    .windows
+                    .iter()
                     .find(|w| w.name == task_receiver)
                     .and_then(|w| w.tmux_pane_id.clone());
 
                 if let Some(pane_id) = pane_id_opt {
-                    tokio::task::spawn_blocking(move || {
-                        std::process::Command::new(mux)
-                            .args(["capture-pane", "-p", "-t", &pane_id, "-S", "-500"])
-                            .output()
-                            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                            .unwrap_or_default()
-                    }).await.unwrap_or_default()
+                    tokio::task::spawn_blocking(move || capture_pane(&pane_id).unwrap_or_default())
+                        .await
+                        .unwrap_or_default()
                 } else {
                     String::new()
                 }
@@ -318,7 +313,10 @@ where
                     sender: "monitor".to_string(),
                     receiver: msg.sender.clone(),
                     timestamp: chrono::Utc::now(),
-                    content: format!("No content available for '{}', task remains pending", msg.receiver),
+                    content: format!(
+                        "No content available for '{}', task remains pending",
+                        msg.receiver
+                    ),
                     msg_type: MessageType::SnapshotData,
                     status: TaskStatus::Pending,
                     parent_id: Some(msg.id),
@@ -327,20 +325,20 @@ where
                 return Ok(());
             }
 
-            let (result_content, task_status) =
-                match extract_result(&snapshot, &task_id) {
-                    Some(clean) => (clean, TaskStatus::Completed),
-                    None => (snapshot.clone(), TaskStatus::Timeout),
-                };
+            let (result_content, task_status) = match extract_result(&snapshot, &task_id) {
+                Some(clean) => (clean, TaskStatus::Completed),
+                None => (snapshot.clone(), TaskStatus::Timeout),
+            };
 
-            let sender_pane_id = session.windows.iter()
+            let sender_pane_id = session
+                .windows
+                .iter()
                 .find(|w| w.name == task_sender)
                 .and_then(|w| w.tmux_pane_id.clone());
 
             let delivered = if let Some(pane_id) = sender_pane_id {
-                let envelope = format_result_envelope(
-                    &task_id, &task_receiver, &task_sender, &result_content,
-                );
+                let envelope =
+                    format_result_envelope(&task_id, &task_receiver, &task_sender, &result_content);
                 match deliver_to_pane(&pane_id, &envelope) {
                     Ok(()) => true,
                     Err(e) => {
@@ -400,7 +398,10 @@ where
                     sender: "monitor".to_string(),
                     receiver: msg.sender.clone(),
                     timestamp: chrono::Utc::now(),
-                    content: format!("Failed to deliver result to sender '{}', task remains pending", task_sender),
+                    content: format!(
+                        "Failed to deliver result to sender '{}', task remains pending",
+                        task_sender
+                    ),
                     msg_type: MessageType::SnapshotData,
                     status: TaskStatus::Pending,
                     parent_id: Some(msg.id),

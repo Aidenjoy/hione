@@ -1,17 +1,12 @@
-use crate::server::MonitorState;
+use crate::{server::MonitorState, tmux::capture_pane};
 use hi_core::{
-    history::read_latest_response,
+    history::{read_latest_response, supported_tool_name},
     ipc::{recv_message, send_message},
     message::{Message, MessageType, TaskStatus},
 };
-use std::{path::Path, process::Command, time::Duration};
+use std::{path::Path, time::Duration};
 use tokio::time;
 use uuid::Uuid;
-
-/// Get the multiplexer binary name for the current platform
-fn mux_bin() -> &'static str {
-    if cfg!(windows) { "psmux" } else { "tmux" }
-}
 
 pub async fn poll_snapshots(state: MonitorState) {
     let mut interval = time::interval(Duration::from_secs(2));
@@ -31,11 +26,10 @@ pub async fn poll_snapshots(state: MonitorState) {
                 status: TaskStatus::Pending,
                 parent_id: None,
             };
-            if let Err(e) = request_snapshot(&state, &req, &window.tmux_pane_id, &window.name, &cwd).await {
-                tracing::warn!(
-                    "Snapshot request failed for '{}': {e}",
-                    window.name
-                );
+            if let Err(e) =
+                request_snapshot(&state, &req, &window.tmux_pane_id, &window.name, &cwd).await
+            {
+                tracing::warn!("Snapshot request failed for '{}': {e}", window.name);
             }
         }
     }
@@ -48,6 +42,8 @@ pub async fn request_snapshot(
     window_name: &str,
     cwd: &Path,
 ) -> anyhow::Result<()> {
+    let known_tool = supported_tool_name(window_name).is_some();
+
     #[cfg(unix)]
     {
         use tokio::net::UnixStream;
@@ -55,37 +51,35 @@ pub async fn request_snapshot(
         let stream_result = UnixStream::connect(&snap_socket).await;
         let mut stream = match stream_result {
             Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound
-                    || e.kind() == std::io::ErrorKind::ConnectionRefused => {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::NotFound
+                    || e.kind() == std::io::ErrorKind::ConnectionRefused =>
+            {
                 if let Some(content) = read_latest_response(window_name, cwd).await {
                     let mut snapshots = state.snapshots.write().await;
                     snapshots.insert(req.receiver.clone(), content);
-                    return Ok(())
+                    return Ok(());
+                }
+
+                if known_tool {
+                    return Ok(());
                 }
 
                 if let Some(pane_id) = tmux_pane_id {
                     let pane_id = pane_id.clone();
-                    let mux = mux_bin();
-                    let content = tokio::task::spawn_blocking(move || {
-                        Command::new(mux)
-                            .args(["capture-pane", "-p", "-t", &pane_id, "-S", "-500"])
-                            .output()
-                            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                    })
-                    .await??;
+                    let content =
+                        tokio::task::spawn_blocking(move || capture_pane(&pane_id)).await??;
                     let mut snapshots = state.snapshots.write().await;
                     snapshots.insert(req.receiver.clone(), content);
                 }
-                return Ok(())
+                return Ok(());
             }
             Err(e) => return Err(e.into()),
         };
         send_message(&mut stream, req).await?;
-        let resp = tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            recv_message(&mut stream),
-        )
-        .await??;
+        let resp =
+            tokio::time::timeout(std::time::Duration::from_secs(3), recv_message(&mut stream))
+                .await??;
 
         if resp.msg_type == MessageType::SnapshotData {
             let mut snapshots = state.snapshots.write().await;
@@ -95,22 +89,19 @@ pub async fn request_snapshot(
 
     #[cfg(windows)]
     {
-        // Windows: use psmux capture-pane or read history
         if let Some(content) = read_latest_response(window_name, cwd).await {
             let mut snapshots = state.snapshots.write().await;
             snapshots.insert(req.receiver.clone(), content);
-            return Ok(())
+            return Ok(());
+        }
+
+        if known_tool {
+            return Ok(());
         }
 
         if let Some(pane_id) = tmux_pane_id {
             let pane_id = pane_id.clone();
-            let content = tokio::task::spawn_blocking(move || {
-                Command::new(mux_bin())
-                    .args(["capture-pane", "-p", "-t", &pane_id, "-S", "-500"])
-                    .output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-            })
-            .await??;
+            let content = tokio::task::spawn_blocking(move || capture_pane(&pane_id)).await??;
             let mut snapshots = state.snapshots.write().await;
             snapshots.insert(req.receiver.clone(), content);
         }

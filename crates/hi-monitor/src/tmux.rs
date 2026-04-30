@@ -25,8 +25,32 @@ pub fn deliver_to_pane(pane_id: &str, content: &str) -> io::Result<()> {
     }
 }
 
+pub fn capture_pane(pane_id: &str) -> io::Result<String> {
+    #[cfg(windows)]
+    {
+        capture_pane_windows(pane_id)
+    }
+
+    #[cfg(not(windows))]
+    {
+        capture_pane_unix(pane_id)
+    }
+}
+
 fn bracketed_paste(content: &str) -> String {
     format!("\x1b[200~{content}\x1b[201~")
+}
+
+#[cfg(not(windows))]
+fn capture_pane_unix(pane_id: &str) -> io::Result<String> {
+    run_mux_output(["capture-pane", "-p", "-t", pane_id, "-S", "-500"])
+        .or_else(|_| run_mux_output(["capture-pane", "-p", "-t", pane_id]))
+}
+
+#[cfg(windows)]
+fn capture_pane_windows(pane_id: &str) -> io::Result<String> {
+    run_mux_output(["capture-pane", "-p", "-t", pane_id])
+        .or_else(|_| run_mux_output(["capture-pane", "-p", "-t", pane_id, "-S", "-500"]))
 }
 
 #[cfg(not(windows))]
@@ -119,7 +143,6 @@ fn run_mux_command<const N: usize>(args: [&str; N]) -> io::Result<()> {
     Err(io::Error::new(io::ErrorKind::Other, details))
 }
 
-#[cfg(windows)]
 fn run_mux_output<const N: usize>(args: [&str; N]) -> io::Result<String> {
     let output = Command::new(mux_bin()).args(args).output()?;
     if output.status.success() {
@@ -145,11 +168,24 @@ fn windows_buffer_delivery_commands(
     original_pane: Option<&str>,
 ) -> Vec<Vec<String>> {
     let mut commands = vec![
-        vec!["display-message".to_string(), "-p".to_string(), "#{pane_id}".to_string()],
+        vec![
+            "display-message".to_string(),
+            "-p".to_string(),
+            "#{pane_id}".to_string(),
+        ],
         vec!["load-buffer".to_string(), tmp_path.to_string()],
-        vec!["select-pane".to_string(), "-t".to_string(), pane_id.to_string()],
+        vec![
+            "select-pane".to_string(),
+            "-t".to_string(),
+            pane_id.to_string(),
+        ],
         vec!["paste-buffer".to_string()],
-        vec!["send-keys".to_string(), "-t".to_string(), pane_id.to_string(), "Enter".to_string()],
+        vec![
+            "send-keys".to_string(),
+            "-t".to_string(),
+            pane_id.to_string(),
+            "Enter".to_string(),
+        ],
     ];
     if let Some(original_pane) = original_pane {
         if original_pane != pane_id {
@@ -184,8 +220,50 @@ fn windows_literal_fallback_commands(pane_id: &str, content: &str) -> Vec<Vec<St
 }
 
 #[cfg(test)]
+fn capture_pane_args_for_platform(pane_id: &str, windows: bool) -> Vec<Vec<String>> {
+    if windows {
+        vec![
+            vec![
+                "capture-pane".to_string(),
+                "-p".to_string(),
+                "-t".to_string(),
+                pane_id.to_string(),
+            ],
+            vec![
+                "capture-pane".to_string(),
+                "-p".to_string(),
+                "-t".to_string(),
+                pane_id.to_string(),
+                "-S".to_string(),
+                "-500".to_string(),
+            ],
+        ]
+    } else {
+        vec![
+            vec![
+                "capture-pane".to_string(),
+                "-p".to_string(),
+                "-t".to_string(),
+                pane_id.to_string(),
+                "-S".to_string(),
+                "-500".to_string(),
+            ],
+            vec![
+                "capture-pane".to_string(),
+                "-p".to_string(),
+                "-t".to_string(),
+                pane_id.to_string(),
+            ],
+        ]
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use super::{windows_buffer_delivery_commands, windows_literal_fallback_commands};
+    use super::{
+        capture_pane_args_for_platform, windows_buffer_delivery_commands,
+        windows_literal_fallback_commands,
+    };
 
     #[test]
     fn windows_delivery_uses_buffer_paste_after_selecting_target() {
@@ -211,5 +289,27 @@ mod tests {
         assert_eq!(commands[0][3], "-l");
         assert!(commands[0][4].contains("hello\nworld"));
         assert!(!commands[0][4].contains("\x1b[200~"));
+    }
+
+    #[test]
+    fn windows_capture_uses_psmux_documented_args_first() {
+        let commands = capture_pane_args_for_platform("%2", true);
+
+        assert_eq!(commands[0], vec!["capture-pane", "-p", "-t", "%2"]);
+        assert_eq!(
+            commands[1],
+            vec!["capture-pane", "-p", "-t", "%2", "-S", "-500"]
+        );
+    }
+
+    #[test]
+    fn unix_capture_keeps_scrollback_args_first() {
+        let commands = capture_pane_args_for_platform("%2", false);
+
+        assert_eq!(
+            commands[0],
+            vec!["capture-pane", "-p", "-t", "%2", "-S", "-500"]
+        );
+        assert_eq!(commands[1], vec!["capture-pane", "-p", "-t", "%2"]);
     }
 }

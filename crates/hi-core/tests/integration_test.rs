@@ -1,5 +1,7 @@
 // tests/integration_test.rs
 // 测试 IPC 帧读写端到端
+#[cfg(unix)]
+use hi_core::ipc::{recv_message, send_message};
 use hi_core::message::Message;
 
 #[tokio::test]
@@ -39,7 +41,9 @@ async fn test_db_message_persistence() {
     let pool = hi_core::db::init_db(dir.path()).await.unwrap();
     let msg = Message::new_task("sender", "receiver", "test task");
     hi_core::db::insert_message(&pool, &msg).await.unwrap();
-    let retrieved = hi_core::db::get_message_by_id(&pool, &msg.id.to_string()).await.unwrap();
+    let retrieved = hi_core::db::get_message_by_id(&pool, &msg.id.to_string())
+        .await
+        .unwrap();
     assert!(retrieved.is_some());
     assert_eq!(retrieved.unwrap().content, "test task");
 }

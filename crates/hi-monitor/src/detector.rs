@@ -1,8 +1,12 @@
-use crate::{server::{MonitorState, PULL_COOLDOWN_SECS}, snapshot::poll_snapshots, tmux::deliver_to_pane};
+use crate::{
+    server::{MonitorState, PULL_COOLDOWN_SECS},
+    snapshot::poll_snapshots,
+    tmux::deliver_to_pane,
+};
 use anyhow::Result;
 use hi_core::{
     db::insert_message,
-    history::read_latest_response,
+    history::{read_latest_response, supported_tool_name},
     message::{Message, MessageType, TaskStatus},
     protocol::{extract_result, format_result_envelope},
 };
@@ -14,10 +18,7 @@ const STUCK_THRESHOLD_SECS: u64 = 30;
 const CHECK_INTERVAL_SECS: u64 = 2;
 
 fn is_known_tool(name: &str) -> bool {
-    matches!(
-        name.to_lowercase().as_str(),
-        "claude" | "gemini" | "opencode" | "codex" | "qwen"
-    )
+    supported_tool_name(name).is_some()
 }
 
 pub async fn run(state: MonitorState) -> Result<()> {
@@ -87,7 +88,9 @@ pub async fn auto_return_stuck_content(state: &MonitorState, window_name: &str, 
 
     let task_info = {
         let queues = state.queues.read().await;
-        queues.peek_next(window_name).map(|t| (t.id, t.sender.clone()))
+        queues
+            .peek_next(window_name)
+            .map(|t| (t.id, t.sender.clone()))
     };
 
     if let Some((task_id, task_sender)) = task_info {
@@ -101,9 +104,14 @@ pub async fn auto_return_stuck_content(state: &MonitorState, window_name: &str, 
             .find(|w| w.name == task_sender)
             .and_then(|w| w.tmux_pane_id.clone());
         if let Some(pane_id) = sender_pane_id {
-            let envelope = format_result_envelope(&task_id, window_name, &task_sender, &result_content);
+            let envelope =
+                format_result_envelope(&task_id, window_name, &task_sender, &result_content);
             if let Err(e) = deliver_to_pane(&pane_id, &envelope) {
-                tracing::warn!("auto-pull: failed to deliver result to pane {}: {}", pane_id, e);
+                tracing::warn!(
+                    "auto-pull: failed to deliver result to pane {}: {}",
+                    pane_id,
+                    e
+                );
             }
         }
 
@@ -153,7 +161,7 @@ async fn detect_task_done_structured(state: MonitorState) {
             let baseline = baselines.get(receiver).cloned().unwrap_or_default();
 
             let current = match read_latest_response(receiver, &work_dir).await {
-                None => continue,               // 结构化存储暂无数据，等待
+                None => continue,                     // 结构化存储暂无数据，等待
                 Some(c) if c == baseline => continue, // 无新内容
                 Some(c) => c,
             };
@@ -210,7 +218,11 @@ async fn detect_task_done_structured(state: MonitorState) {
                 queues.pop_next(receiver);
                 drop(queues);
                 // 更新基线，为下一个任务做准备
-                state.response_baselines.write().await.insert(receiver.clone(), current);
+                state
+                    .response_baselines
+                    .write()
+                    .await
+                    .insert(receiver.clone(), current);
             }
         }
     }
@@ -239,7 +251,8 @@ async fn detect_task_done(state: MonitorState) {
         let session = state.session.read().await;
 
         for (task_id, (sender, receiver)) in &pending {
-            // 已知工具由结构化存储检测，快照检测不介入
+            // Known AI tools are collected from their structured history logs on every platform.
+            // Snapshot/capture detection is only for custom or unknown tools.
             if is_known_tool(receiver) {
                 continue;
             }
@@ -260,13 +273,10 @@ async fn detect_task_done(state: MonitorState) {
                     .and_then(|w| w.tmux_pane_id.clone());
 
                 if let Some(pane_id) = sender_pane_id {
-                    let envelope = format_result_envelope(task_id, receiver, sender, &result_content);
+                    let envelope =
+                        format_result_envelope(task_id, receiver, sender, &result_content);
                     if let Err(e) = deliver_to_pane(&pane_id, &envelope) {
-                        tracing::warn!(
-                            "Failed to deliver result to tmux pane {}: {}",
-                            pane_id,
-                            e
-                        );
+                        tracing::warn!("Failed to deliver result to tmux pane {}: {}", pane_id, e);
                     }
                 }
 

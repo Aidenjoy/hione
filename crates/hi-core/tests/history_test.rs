@@ -1,4 +1,4 @@
-use hi_core::history::read_latest_response;
+use hi_core::history::{read_latest_response, supported_tool_name};
 use std::path::Path;
 
 #[tokio::test]
@@ -47,4 +47,18 @@ async fn read_latest_response_case_insensitive() {
     assert!(result1.is_none());
     assert!(result2.is_none());
     assert!(result3.is_none());
+}
+
+#[test]
+fn supported_tool_name_accepts_numbered_instances() {
+    assert_eq!(supported_tool_name("qwen1"), Some("qwen"));
+    assert_eq!(supported_tool_name("opencode12"), Some("opencode"));
+    assert_eq!(supported_tool_name("Codex2"), Some("codex"));
+    assert_eq!(supported_tool_name("claude-code3"), Some("claude"));
+}
+
+#[test]
+fn supported_tool_name_rejects_unknown_numbered_names() {
+    assert_eq!(supported_tool_name("unknown1"), None);
+    assert_eq!(supported_tool_name("gpt4"), None);
 }

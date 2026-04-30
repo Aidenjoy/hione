@@ -1,31 +1,63 @@
+use sqlx::Row;
 use std::fs;
 use std::path::{Path, PathBuf};
-use sqlx::Row;
 
 fn home_dir() -> Option<PathBuf> {
-    std::env::var("HOME").ok().map(PathBuf::from)
+    std::env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE").filter(|v| !v.is_empty()))
+        .map(PathBuf::from)
+        .or_else(|| {
+            let drive = std::env::var_os("HOMEDRIVE")?;
+            let path = std::env::var_os("HOMEPATH")?;
+            let mut home = PathBuf::from(drive);
+            home.push(path);
+            Some(home)
+        })
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+pub fn supported_tool_name(tool: &str) -> Option<&'static str> {
+    let tool_lower = tool.to_lowercase();
+    let stripped = tool_lower.trim_end_matches(|c: char| c.is_ascii_digit());
+
+    match stripped {
+        "claude" | "claude-code" => Some("claude"),
+        "codex" => Some("codex"),
+        "gemini" => Some("gemini"),
+        "opencode" => Some("opencode"),
+        "qwen" => Some("qwen"),
+        _ => None,
+    }
 }
 
 pub async fn read_latest_response(tool: &str, cwd: &Path) -> Option<String> {
-    let tool_lower = tool.to_lowercase();
+    let tool_name = supported_tool_name(tool)?;
     let cwd_buf = cwd.to_path_buf();
-    
-    match tool_lower.as_str() {
-        "claude" | "claude-code" => {
-            tokio::task::spawn_blocking(move || read_claude_code_history(&cwd_buf)).await.ok().flatten()
-        }
-        "codex" => {
-            tokio::task::spawn_blocking(move || read_codex_history(&cwd_buf)).await.ok().flatten()
-        }
-        "gemini" => {
-            tokio::task::spawn_blocking(move || read_gemini_history(&cwd_buf)).await.ok().flatten()
-        }
-        "opencode" => {
-            read_opencode_history(cwd).await
-        }
-        "qwen" => {
-            tokio::task::spawn_blocking(move || read_qwen_history(&cwd_buf)).await.ok().flatten()
-        }
+
+    match tool_name {
+        "claude" => tokio::task::spawn_blocking(move || read_claude_code_history(&cwd_buf))
+            .await
+            .ok()
+            .flatten(),
+        "codex" => tokio::task::spawn_blocking(move || read_codex_history(&cwd_buf))
+            .await
+            .ok()
+            .flatten(),
+        "gemini" => tokio::task::spawn_blocking(move || read_gemini_history(&cwd_buf))
+            .await
+            .ok()
+            .flatten(),
+        "opencode" => read_opencode_history(cwd).await,
+        "qwen" => tokio::task::spawn_blocking(move || read_qwen_history(&cwd_buf))
+            .await
+            .ok()
+            .flatten(),
         _ => None,
     }
 }
@@ -42,12 +74,15 @@ fn encode_cwd_for_claude(cwd: &Path) -> Option<String> {
 fn read_claude_code_history(cwd: &Path) -> Option<String> {
     let home = home_dir()?;
     let encoded = encode_cwd_for_claude(cwd)?;
-    let projects_dir = home.join(".claude").join("projects").join(&encoded);
-    
+    let projects_root = env_path("CLAUDE_PROJECTS_ROOT")
+        .or_else(|| env_path("CLAUDE_PROJECT_ROOT"))
+        .unwrap_or_else(|| home.join(".claude").join("projects"));
+    let projects_dir = projects_root.join(&encoded);
+
     if !projects_dir.exists() {
         return None;
     }
-    
+
     // 仅选取 .jsonl 文件，避免解析目录或其他文件
     let jsonl_files: Vec<_> = fs::read_dir(&projects_dir)
         .ok()?
@@ -57,13 +92,13 @@ fn read_claude_code_history(cwd: &Path) -> Option<String> {
             path.is_file() && path.extension().map(|ext| ext == "jsonl").unwrap_or(false)
         })
         .collect();
-    
+
     let latest_file = jsonl_files
         .into_iter()
         .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())?;
-    
+
     let content = fs::read_to_string(latest_file.path()).ok()?;
-    
+
     let texts: Vec<String> = content
         .lines()
         .filter_map(|line| {
@@ -73,7 +108,7 @@ fn read_claude_code_history(cwd: &Path) -> Option<String> {
             }
             let message = entry.get("message")?;
             let content_arr = message.get("content")?.as_array()?;
-            
+
             // 拼接同一消息中的所有 text 部分，忽略 thinking 等
             let msg_text = content_arr
                 .iter()
@@ -86,7 +121,7 @@ fn read_claude_code_history(cwd: &Path) -> Option<String> {
                 })
                 .collect::<Vec<String>>()
                 .join("");
-            
+
             if msg_text.is_empty() {
                 None
             } else {
@@ -94,7 +129,7 @@ fn read_claude_code_history(cwd: &Path) -> Option<String> {
             }
         })
         .collect();
-    
+
     if texts.is_empty() {
         None
     } else {
@@ -106,7 +141,7 @@ fn read_claude_code_history(cwd: &Path) -> Option<String> {
 /// 优化：优先进入最新的日期子目录（YYYY/MM/DD），避免全量递归扫描
 fn find_latest_codex_session_file(sessions_dir: &Path) -> Option<PathBuf> {
     let mut current = sessions_dir.to_path_buf();
-    
+
     // 尝试深入三层：YYYY, MM, DD
     for _ in 0..3 {
         let mut subdirs: Vec<_> = fs::read_dir(&current)
@@ -114,11 +149,11 @@ fn find_latest_codex_session_file(sessions_dir: &Path) -> Option<PathBuf> {
             .filter_map(|e| e.ok())
             .filter(|e| e.path().is_dir())
             .collect();
-        
+
         if subdirs.is_empty() {
             return None;
         }
-        
+
         subdirs.sort_by_key(|e| e.file_name());
         if let Some(latest_subdir) = subdirs.pop() {
             current = latest_subdir.path();
@@ -126,7 +161,7 @@ fn find_latest_codex_session_file(sessions_dir: &Path) -> Option<PathBuf> {
             return None;
         }
     }
-    
+
     let mut files: Vec<_> = fs::read_dir(&current)
         .ok()?
         .filter_map(|e| e.ok())
@@ -135,30 +170,32 @@ fn find_latest_codex_session_file(sessions_dir: &Path) -> Option<PathBuf> {
             path.is_file() && path.extension().map(|ext| ext == "jsonl").unwrap_or(false)
         })
         .collect();
-    
+
     files.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
     files.pop().map(|e| e.path())
 }
 
 fn read_codex_history(cwd: &Path) -> Option<String> {
     let home = home_dir()?;
-    let sessions_dir = home.join(".codex").join("sessions");
-    
+    let sessions_dir = env_path("CODEX_SESSION_ROOT")
+        .or_else(|| env_path("CODEX_HOME").map(|p| p.join("sessions")))
+        .unwrap_or_else(|| home.join(".codex").join("sessions"));
+
     if !sessions_dir.exists() {
         return None;
     }
-    
+
     let cwd_str = cwd.canonicalize().ok()?.to_string_lossy().to_string();
-    
+
     let latest_file = find_latest_codex_session_file(&sessions_dir)?;
     let content = fs::read_to_string(&latest_file).ok()?;
-    
+
     let mut cwd_matches = false;
     let texts: Vec<String> = content
         .lines()
         .filter_map(|line| {
             let entry: serde_json::Value = serde_json::from_str(line).ok()?;
-            
+
             // 检查 session_meta 确认是否匹配当前项目
             if entry.get("type")?.as_str()? == "session_meta" {
                 let payload = entry.get("payload")?;
@@ -167,20 +204,20 @@ fn read_codex_history(cwd: &Path) -> Option<String> {
                 }
                 return None;
             }
-            
+
             if !cwd_matches {
                 return None;
             }
-            
+
             if entry.get("type")?.as_str()? != "response_item" {
                 return None;
             }
-            
+
             let payload = entry.get("payload")?;
             if payload.get("role")?.as_str()? != "assistant" {
                 return None;
             }
-            
+
             let content_arr = payload.get("content")?.as_array()?;
             let msg_text = content_arr
                 .iter()
@@ -193,7 +230,7 @@ fn read_codex_history(cwd: &Path) -> Option<String> {
                 })
                 .collect::<Vec<String>>()
                 .join("");
-            
+
             if msg_text.is_empty() {
                 None
             } else {
@@ -201,7 +238,7 @@ fn read_codex_history(cwd: &Path) -> Option<String> {
             }
         })
         .collect();
-    
+
     if !cwd_matches || texts.is_empty() {
         None
     } else {
@@ -211,14 +248,14 @@ fn read_codex_history(cwd: &Path) -> Option<String> {
 
 fn read_gemini_history(cwd: &Path) -> Option<String> {
     let home = home_dir()?;
-    let tmp_dir = home.join(".gemini").join("tmp");
-    
+    let tmp_dir = env_path("GEMINI_ROOT").unwrap_or_else(|| home.join(".gemini").join("tmp"));
+
     if !tmp_dir.exists() {
         return None;
     }
-    
+
     let cwd_str = cwd.canonicalize().ok()?.to_string_lossy().to_string();
-    
+
     // 通过 .project_root 文件内容定位项目目录
     let project_dir = fs::read_dir(&tmp_dir)
         .ok()?
@@ -234,12 +271,12 @@ fn read_gemini_history(cwd: &Path) -> Option<String> {
                 false
             }
         })?;
-    
+
     let chats_dir = project_dir.path().join("chats");
     if !chats_dir.exists() {
         return None;
     }
-    
+
     let session_files: Vec<_> = fs::read_dir(&chats_dir)
         .ok()?
         .filter_map(|e| e.ok())
@@ -249,14 +286,14 @@ fn read_gemini_history(cwd: &Path) -> Option<String> {
             path.is_file() && n.starts_with("session-") && n.ends_with(".json")
         })
         .collect();
-    
+
     let latest_file = session_files
         .into_iter()
         .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())?;
-    
+
     let content = fs::read_to_string(latest_file.path()).ok()?;
     let session: serde_json::Value = serde_json::from_str(&content).ok()?;
-    
+
     let messages = session.get("messages")?.as_array()?;
     let texts: Vec<String> = messages
         .iter()
@@ -268,7 +305,7 @@ fn read_gemini_history(cwd: &Path) -> Option<String> {
             }
         })
         .collect();
-    
+
     if texts.is_empty() {
         None
     } else {
@@ -313,38 +350,37 @@ fn read_qwen_history(_cwd: &Path) -> Option<String> {
 }
 
 async fn read_opencode_history(cwd: &Path) -> Option<String> {
-    let home = home_dir()?;
-    let db_path = home.join(".local").join("share").join("opencode").join("opencode.db");
-    
+    let db_path = find_opencode_db_path()?;
+
     if !db_path.exists() {
         return None;
     }
-    
+
     let cwd_str = cwd.canonicalize().ok()?.to_string_lossy().to_string();
-    
+
     // 使用 sqlite:// 前缀并开启只读模式
     let db_url = format!("sqlite://{}?mode=ro", db_path.display());
-    
+
     // 建立单连接池
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect(&db_url)
         .await
         .ok()?;
-    
+
     // 执行查询并确保及时关闭连接
     let result = (|| async {
         // 根据 directory 定位最新 session
         let session_id: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM session WHERE directory = ? ORDER BY time_created DESC LIMIT 1"
+            "SELECT id FROM session WHERE directory = ? ORDER BY time_created DESC LIMIT 1",
         )
         .bind(&cwd_str)
         .fetch_optional(&pool)
         .await
         .ok()?;
-        
+
         let session_id = session_id?;
-        
+
         // 提取 assistant 角色的 text 内容
         let texts: Vec<String> = sqlx::query(
             "SELECT json_extract(p.data, '$.text') FROM part p \
@@ -352,7 +388,7 @@ async fn read_opencode_history(cwd: &Path) -> Option<String> {
              WHERE m.session_id = ? \
                AND json_extract(m.data, '$.role') = 'assistant' \
                AND json_extract(p.data, '$.type') = 'text' \
-             ORDER BY p.time_created ASC"
+             ORDER BY p.time_created ASC",
         )
         .bind(&session_id)
         .fetch_all(&pool)
@@ -361,16 +397,99 @@ async fn read_opencode_history(cwd: &Path) -> Option<String> {
         .into_iter()
         .filter_map(|row| row.try_get::<String, _>(0).ok())
         .collect();
-        
+
         if texts.is_empty() {
             None
         } else {
             Some(texts.join("\n\n"))
         }
-    })().await;
-    
+    })()
+    .await;
+
     pool.close().await;
     result
+}
+
+fn find_opencode_db_path() -> Option<PathBuf> {
+    let home = home_dir()?;
+    let mut candidates = Vec::new();
+
+    if let Some(path) = env_path("OPENCODE_DB_PATH") {
+        candidates.push(path);
+    }
+
+    if let Some(root) = env_path("OPENCODE_STORAGE_ROOT") {
+        candidates.push(root.join("opencode.db"));
+        candidates.push(root.join("..").join("opencode.db"));
+    }
+
+    if let Some(xdg) = env_path("XDG_DATA_HOME") {
+        candidates.push(xdg.join("opencode").join("opencode.db"));
+        candidates.push(xdg.join("opencode").join("storage").join("opencode.db"));
+    }
+
+    candidates.push(
+        home.join(".local")
+            .join("share")
+            .join("opencode")
+            .join("opencode.db"),
+    );
+    candidates.push(
+        home.join(".local")
+            .join("share")
+            .join("opencode")
+            .join("storage")
+            .join("opencode.db"),
+    );
+
+    if let Some(local_app_data) = env_path("LOCALAPPDATA") {
+        candidates.push(local_app_data.join("opencode").join("opencode.db"));
+        candidates.push(
+            local_app_data
+                .join("opencode")
+                .join("storage")
+                .join("opencode.db"),
+        );
+    }
+
+    if let Some(app_data) = env_path("APPDATA") {
+        candidates.push(app_data.join("opencode").join("opencode.db"));
+        candidates.push(
+            app_data
+                .join("opencode")
+                .join("storage")
+                .join("opencode.db"),
+        );
+    }
+
+    candidates.push(
+        home.join("AppData")
+            .join("Local")
+            .join("opencode")
+            .join("opencode.db"),
+    );
+    candidates.push(
+        home.join("AppData")
+            .join("Local")
+            .join("opencode")
+            .join("storage")
+            .join("opencode.db"),
+    );
+    candidates.push(
+        home.join("AppData")
+            .join("Roaming")
+            .join("opencode")
+            .join("opencode.db"),
+    );
+    candidates.push(
+        home.join("AppData")
+            .join("Roaming")
+            .join("opencode")
+            .join("storage")
+            .join("opencode.db"),
+    );
+
+    candidates.into_iter().find(|path| path.exists())
 }
 
 #[cfg(test)]
@@ -422,10 +541,14 @@ mod tests {
                     })
                     .collect::<Vec<String>>()
                     .join("");
-                if msg_text.is_empty() { None } else { Some(msg_text) }
+                if msg_text.is_empty() {
+                    None
+                } else {
+                    Some(msg_text)
+                }
             })
             .collect();
-        
+
         assert_eq!(texts.len(), 2);
         assert_eq!(texts[0], "Hello there!");
         assert_eq!(texts[1], "Final answer");

@@ -7,6 +7,52 @@ use std::path::PathBuf;
 use std::process::Command;
 use sqlx::Row;
 
+/// Find psmux executable path on Windows.
+/// WinGet installs to a directory that may not be immediately in PATH.
+#[cfg(windows)]
+fn find_psmux_path() -> Option<PathBuf> {
+    // Check PATH first
+    if let Ok(path) = which::which("psmux") {
+        return Some(path);
+    }
+
+    // Check WinGet Packages directory
+    if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+        let winget_base = PathBuf::from(&localappdata)
+            .join("Microsoft")
+            .join("WinGet")
+            .join("Packages");
+        if winget_base.exists() {
+            if let Ok(entries) = std::fs::read_dir(&winget_base) {
+                for entry in entries.flatten() {
+                    let pkg_dir = entry.path();
+                    let exe_path = pkg_dir.join("psmux.exe");
+                    if exe_path.exists() {
+                        return Some(exe_path);
+                    }
+                }
+            }
+        }
+    }
+
+    // Check where.exe
+    if let Ok(out) = Command::new("where.exe").arg("psmux").output() {
+        if out.status.success() {
+            let first = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if !first.is_empty() {
+                return Some(PathBuf::from(first));
+            }
+        }
+    }
+
+    None
+}
+
 pub async fn launch_session(
     work_dir: &str,
     tools: &[String],
@@ -90,12 +136,19 @@ pub async fn launch_session(
 
     #[cfg(windows)]
     {
+        // Find psmux - WinGet installs it to a special directory that may not be in PATH yet
+        let psmux_path = find_psmux_path();
+        let psmux_cmd = psmux_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or("psmux".to_string());
+
         let wt_available = which::which("wt").is_ok();
-        // Simple command without complex quoting issues
-        let ps_cmd = format!("cd {}; psmux new-session -s {} -- {}", work_dir, session_name, hi_cmd);
+        // PowerShell command: cd to work_dir, then run psmux with session
+        let ps_cmd = format!("cd '{}'; {} new-session -s {} -- {}", work_dir, psmux_cmd, session_name, hi_cmd);
 
         if wt_available {
-            // Windows Terminal: directly run powershell with the command
+            // Windows Terminal: open PowerShell tab
             Command::new("wt")
                 .args(["powershell", "-NoExit", "-Command", &ps_cmd])
                 .spawn()

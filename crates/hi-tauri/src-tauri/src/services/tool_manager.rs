@@ -223,10 +223,11 @@ fn find_binary(name: &str) -> Option<std::path::PathBuf> {
         return Some(path);
     }
 
-    // Windows: check npm global dir (%APPDATA%\npm) and use `where` for fresh PATH lookup.
+    // Windows: check npm global dir (%APPDATA%\npm), WinGet packages dir, and use `where.exe` for fresh PATH lookup.
     // Must come before the Unix HOME block because HOME is not set on Windows.
     #[cfg(windows)]
     {
+        // Check npm global directory
         if let Ok(appdata) = std::env::var("APPDATA") {
             let npm_dir = std::path::PathBuf::from(&appdata).join("npm");
             for ext in &["", ".cmd", ".ps1", ".exe"] {
@@ -236,7 +237,34 @@ fn find_binary(name: &str) -> Option<std::path::PathBuf> {
                 }
             }
         }
-        // Windows: use PowerShell `where.exe` to find binary
+
+        // Check WinGet Packages directory (winget installs here but may not add to PATH immediately)
+        if let Ok(localappdata) = std::env::var("LOCALAPPDATA") {
+            let winget_base = std::path::PathBuf::from(&localappdata)
+                .join("Microsoft")
+                .join("WinGet")
+                .join("Packages");
+            if winget_base.exists() {
+                // WinGet package folders have names like "marlocarlo.psmux_Microsoft.Winget.Source_8wekyb3d8bbwe"
+                if let Ok(entries) = std::fs::read_dir(&winget_base) {
+                    for entry in entries.flatten() {
+                        let pkg_dir = entry.path();
+                        // Look for the executable directly in the package folder
+                        let exe_path = pkg_dir.join(format!("{}.exe", name));
+                        if exe_path.exists() {
+                            return Some(exe_path);
+                        }
+                        // Also check for name without .exe extension
+                        let bin_path = pkg_dir.join(name);
+                        if bin_path.exists() {
+                            return Some(bin_path);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Use PowerShell where.exe to find binary (fresh PATH lookup)
         if let Ok(out) = Command::new("where.exe").arg(name).output() {
             if out.status.success() {
                 let first = String::from_utf8_lossy(&out.stdout)

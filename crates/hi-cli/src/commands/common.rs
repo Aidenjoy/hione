@@ -93,7 +93,7 @@ fn is_stale_socket_error(e: &anyhow::Error) -> bool {
     false
 }
 
-async fn restart_monitor(_socket_path: &str) -> Result<()> {
+async fn restart_monitor(socket_path: &str) -> Result<()> {
     // Derive hione_dir from socket_path (Unix: "/.../.hione/hi.sock")
     #[cfg(unix)]
     let hione_dir = std::path::PathBuf::from(socket_path)

@@ -16,7 +16,11 @@ fn mux_bin() -> &'static str {
 
 /// Check if we're inside a multiplexer session
 fn in_mux_session() -> bool {
-    if env::var("TMUX").is_ok() || env::var("PSMUX_SESSION_NAME").is_ok() {
+    // TMUX must be set AND non-empty (empty string means no real tmux session)
+    if env::var("TMUX").ok().filter(|v| !v.is_empty()).is_some() {
+        return true;
+    }
+    if env::var("PSMUX_SESSION_NAME").is_ok() {
         return true;
     }
     // psmux on Windows may not set any env var; probe it directly
@@ -395,6 +399,9 @@ fn start_mux_fallback(names: &[String], session: &mut SessionInfo, hione_dir: &P
         .output()
         .context("Failed to get mux session name")?;
     let mux_session_name = String::from_utf8(session_name_output.stdout)?.trim().to_string();
+    if mux_session_name.is_empty() {
+        anyhow::bail!("Failed to get mux session name: tmux returned empty result. Make sure you are inside a valid tmux session.");
+    }
 
     let hi_panes_output = Command::new(mux)
         .args(["list-panes", "-s", "-t", &mux_session_name, "-F", "#{pane_id}:#{@hi_label}"])

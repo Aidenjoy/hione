@@ -53,6 +53,21 @@ fn find_psmux_path() -> Option<PathBuf> {
     None
 }
 
+#[cfg(any(windows, test))]
+fn powershell_single_quoted(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(any(windows, test))]
+fn build_psmux_new_session_command(psmux_cmd: &str, session_name: &str, hi_cmd: &str) -> String {
+    format!(
+        "& {} new-session -s {} -- {}",
+        powershell_single_quoted(psmux_cmd),
+        powershell_single_quoted(session_name),
+        hi_cmd
+    )
+}
+
 pub async fn launch_session(
     work_dir: &str,
     tools: &[String],
@@ -73,9 +88,8 @@ pub async fn launch_session(
     );
 
     let mut hi_args = vec!["start".to_string()];
-    // On Windows, always force terminal mode (-T) so hi start uses psmux instead
-    // of trying to launch another desktop Tauri instance.
-    #[cfg(windows)]
+    // Always force terminal mode (-T) so hi start uses the terminal multiplexer
+    // instead of trying to launch another desktop Tauri instance.
     hi_args.push("-T".to_string());
     if auto {
         hi_args.push("-a".to_string());
@@ -144,19 +158,20 @@ pub async fn launch_session(
             .unwrap_or("psmux".to_string());
 
         let wt_available = which::which("wt").is_ok();
-        // PowerShell command: cd to work_dir, then run psmux with session
-        let ps_cmd = format!("cd '{}'; {} new-session -s {} -- {}", work_dir, psmux_cmd, session_name, hi_cmd);
+        let ps_cmd = build_psmux_new_session_command(&psmux_cmd, &session_name, &hi_cmd);
 
         if wt_available {
             // Windows Terminal: open PowerShell tab
             Command::new("wt")
-                .args(["powershell", "-NoExit", "-Command", &ps_cmd])
+                .current_dir(work_dir)
+                .args(["-d", work_dir, "powershell", "-NoExit", "-Command", &ps_cmd])
                 .spawn()
                 .map_err(|e| AppError::CommandFailed(format!("无法打开终端: {}", e)))?;
         } else {
-            // Fallback: Start-Process to launch a new PowerShell window
+            // Fallback: launch PowerShell directly in the requested directory.
             Command::new("powershell")
-                .args(["-Command", &format!("Start-Process powershell -ArgumentList '-NoExit','-Command','{}'", ps_cmd)])
+                .current_dir(work_dir)
+                .args(["-NoExit", "-Command", &ps_cmd])
                 .spawn()
                 .map_err(|e| AppError::CommandFailed(format!("无法打开终端: {}", e)))?;
         }
@@ -423,4 +438,33 @@ pub async fn get_task_records(work_dir: &str) -> Result<Vec<TaskRecord>, AppErro
         .collect();
 
     Ok(records)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_psmux_new_session_command, powershell_single_quoted};
+
+    #[test]
+    fn powershell_single_quoted_doubles_embedded_quotes() {
+        assert_eq!(
+            powershell_single_quoted(r"C:\Users\O'Brien\AppData\psmux.exe"),
+            r"'C:\Users\O''Brien\AppData\psmux.exe'"
+        );
+    }
+
+    #[test]
+    fn psmux_command_uses_call_operator_and_quotes_psmux_and_session() {
+        let cmd = build_psmux_new_session_command(
+            r"C:\Users\O'Brien\AppData\Local\Microsoft\WinGet\Packages\psmux.exe",
+            "hi_123'456",
+            "hi start -T -a -r claude,gemini,opencode,qwen",
+        );
+
+        assert_eq!(
+            cmd,
+            r"& 'C:\Users\O''Brien\AppData\Local\Microsoft\WinGet\Packages\psmux.exe' new-session -s 'hi_123''456' -- hi start -T -a -r claude,gemini,opencode,qwen"
+        );
+        assert!(!cmd.contains("cd "));
+        assert!(!cmd.contains(';'));
+    }
 }

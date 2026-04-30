@@ -88,34 +88,34 @@ impl SessionInfo {
 
         // 2. 关闭 mux session（但跳过当前正在使用的同名 session）
         if let Some(session_name) = &self.tmux_session_name {
-            // 如果当前在同名 mux session 中，跳过关闭，避免把用户的 session 杀掉
-            let is_current_session = current_session_name == Some(session_name.as_str());
-            if is_current_session {
-                // 只清理 hi panes（带有 @hi_label 标记的）
+            // 空字符串 session 名称会导致 `kill-session -t ""` 杀掉当前 session，必须跳过
+            if !session_name.is_empty() {
                 use std::process::Command;
-                // 先获取 hi panes 的 ID 列表
-                let output = Command::new(mux_bin())
-                    .args(["list-panes", "-s", "-t", session_name, "-F", "#{pane_id}:#{@hi_label}"])
-                    .output()
-                    .ok();
-
-                if let Some(output) = output {
-                    if let Ok(stdout) = String::from_utf8(output.stdout) {
-                        for line in stdout.lines() {
-                            let parts: Vec<&str> = line.splitn(2, ':').collect();
-                            if parts.len() == 2 && !parts[1].is_empty() {
-                                let _ = Command::new(mux_bin())
-                                    .args(["kill-pane", "-t", parts[0]])
-                                    .status();
+                // 如果当前在同名 mux session 中，跳过关闭，避免把用户的 session 杀掉
+                let is_current_session = current_session_name == Some(session_name.as_str());
+                if is_current_session {
+                    // 只清理 hi panes（带有 @hi_label 标记的）
+                    let output = Command::new(mux_bin())
+                        .args(["list-panes", "-s", "-t", session_name, "-F", "#{pane_id}:#{@hi_label}"])
+                        .output()
+                        .ok();
+                    if let Some(output) = output {
+                        if let Ok(stdout) = String::from_utf8(output.stdout) {
+                            for line in stdout.lines() {
+                                let parts: Vec<&str> = line.splitn(2, ':').collect();
+                                if parts.len() == 2 && !parts[1].is_empty() {
+                                    let _ = Command::new(mux_bin())
+                                        .args(["kill-pane", "-t", parts[0]])
+                                        .status();
+                                }
                             }
                         }
                     }
+                } else {
+                    let _ = Command::new(mux_bin())
+                        .args(["kill-session", "-t", session_name])
+                        .status();
                 }
-            } else {
-                use std::process::Command;
-                let _ = Command::new(mux_bin())
-                    .args(["kill-session", "-t", session_name])
-                    .status();
             }
         }
 

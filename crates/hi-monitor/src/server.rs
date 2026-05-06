@@ -294,8 +294,6 @@ where
                     .await
             {
                 content
-            } else if supported_tool_name(&task_receiver).is_some() {
-                String::new()
             } else {
                 let pane_id_opt = session
                     .windows

@@ -151,6 +151,7 @@ async fn detect_task_done_structured(state: MonitorState) {
         let session = state.session.read().await;
         let work_dir = session.work_dir.clone();
         let baselines = state.response_baselines.read().await.clone();
+        let snapshots = state.snapshots.read().await.clone();
 
         for (task_id, (sender, receiver)) in &pending {
             // 只处理已知工具，未知工具交给快照检测
@@ -161,7 +162,14 @@ async fn detect_task_done_structured(state: MonitorState) {
             let baseline = baselines.get(task_id).cloned().unwrap_or_default();
 
             let current = match read_latest_response(receiver, &work_dir).await {
-                None => continue,                     // 结构化存储暂无数据，等待
+                None => {
+                    // 结构化存储不可用，fallback 到 pane snapshot
+                    let snap = snapshots.get(receiver).cloned().unwrap_or_default();
+                    if snap.trim().is_empty() {
+                        continue;
+                    }
+                    snap
+                }
                 Some(c) if c == baseline => continue, // 无新内容
                 Some(c) => c,
             };

@@ -73,53 +73,31 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
-      - name: Package aclease erlhivrive
+      - name: Prepare macOS Assets
         run: |
-          VERSION="${GITHUB_REF_NAME}"REF_NAME}"
-          ARCHIVE="hHoni{${VERSION}-mVcoE-univSrOal"N}-macos-universal"
-          mkdir -p  "$AECHIV}
+          set -euxo pipefail
+          mkdir -p release-assets
+          VERSION="${GITHUB_REF_NAME}"
           
-          cpse/hi "$Ie}e"s/hi "${ARCHIVE}/"
-          cp tgethi-moitor "${ARCHIVE}"
-          hmd+x${ARCHIVE}/hi"${ARCHIVE}/hionior"
-      
-          APPtarget/release/hi-monitor "${ARCHIVE}/"app
-          cp r{}"${ARCHIVE}/HiOe.app"
-          rsal-apple-darwin/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
-          catc>p"${ARCHIVE}/rns all.sh""<< 'EOF'{APP_PATH}" "${ARCHIVE}/HiOne.app"
-          #!/usr/bn/env bash
-          set -euo pipefail
-        !sDIR="$(cd "$(di/nim/e"${BASH_SOURCE[0]}")"a&&wd"
-          tRoFIX plPEFX:$HME/local/bn}
-          mkDI$H_C)" &RFIX
-          PREFIXInst{llXng-HiOnO.Mpp Eoo/npplications...
-          cp -rf "$DIR/HiOne.app" /Applications/HiOne.appmkdir -p "$PREFIX"
-          echoc"Installing "LI tIolstton$PREFIX..."e.app to /Applications..."
-          cp ff"$DIIR/hi" "$iREFIX/hi.
-a"        cp -f "$DIR/hi-moni or" "$PREFIX//i-mopitor"plications/HiOne.app
-          chmode+xclLPRtFIX/hi" "$PoEFlX/hio onitor.."
-          ifc!pe hof "/hi" "| gPRp hqE "(^|:)PRFIX(:|$); then
-          cp -f "$⚠️ImAodttr PATHPRexport PiTH=\"$PRmFIX:\$PATH\o"nitor"
-          fid +x "$PREFIX/hi" "$PREFIX/hi-monitor"
-           ! ech✓"DPneT|Rre: h" --help"
-          EOF
-          chm(d +x "${ARCHIVE}/i^st|:l.sh$PREFIX(:|$)"; then
+          DMG_PATH=$(find target/universal-apple-darwin/release/bundle/macos -name "*.dmg" -maxdepth 1 | head -1 || true)
           
-          tar -cz  "${ARCHIVE}.tar.gz" "${ARCHIVE}"echo "⚠️  Add to PATH: export PATH=\"$PREFIX:\$PATH\""
+          if [ -z "$DMG_PATH" ]; then
+            echo "❌ No .dmg found" >&2
+            exit 1
           fi
-          echo "✓ Done. Run: hi --help"
-          EOF
-          chmod +x "${ARCHI-universalVE}/install.sh"
-          hion.tar.gz
-          tar -czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
+          
+          DMG_NAME="HiOne-${VERSION}-macOS.dmg"
+          cp "$DMG_PATH" "release-assets/$DMG_NAME"
+          echo "✅ macOS dmg copied: $DMG_NAME"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hione-macos-universal
-          path: hione-*.tar.gz
+          name: hione-macos
+          path: release-assets/*
 
   build-linux:
     runs-on: ubuntu-22.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -146,47 +124,52 @@ a"        cp -f "$DIR/hi-moni or" "$PREFIX//i-mopitor"plications/HiOne.app
 
       - name: Build CLI binaries
         run: cargo build --release -p hi-cli -p hi-monitor
-prLnux Assts
+
       - name: Build Tauri desktop app
-ru        sete-euxonppfai
-          TAURI_Se:e rease-lseats
-      ru VERSION=GITHUB_REF_NM
+        run: |
+          max_attempts=3
+          for attempt in $(seq 1 $max_attempts); do
+            echo "=== Linux build attempt ${attempt}/${max_attempts} ==="
+            if cd crates/hi-tauri && cargo tauri build --bundles deb; then
+              echo "✅ Linux build succeeded"
+              exit 0
+            fi
+            if [ "$attempt" -eq $max_attempts ]; then
+              echo "❌ Linux build failed after ${max_attempts} attempts" >&2
+              exit 1
+            fi
+            sleep_seconds=$((attempt * 60))
+            echo "⚠️ Linux build failed, retrying in ${sleep_seconds}s..."
+            sleep $sleep_seconds
+          done
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      - name: Prepare Linux Assets
+        run: |
+          set -euxo pipefail
+          mkdir -p release-assets
+          VERSION="${GITHUB_REF_NAME}"
           
-O"M       # 1) Copy AppImageARCHIVE="hione-${VERSION}-linux-x86_64"
-          mkdir -p "${ARCHIVE}" || true
-          if [ -n ];the
-          rtAPPIMAGE_NAME=/HiOne-reVEeSeONi-L$AuxCHIVE}/"
-            cp +x"PPRMAGHA "relea-APPs/$APPIMAGE_NAME"
-I=          PhmoP +xIM"elease-"ss{ts/CAPPIMVGE/NAM.g
-  e        echo "✅ Appdmage copied:  AP$IMAGA_NAHi"
-          else
-          cat > ❌ No App"mREesf"und" >&2
-          /rexvtb1
+          DEB=$(find target/release/bundle/deb -name "*.deb" | head -1 || true)
+          
+          if [ -z "$DEB" ]; then
+            echo "❌ No .deb found" >&2
+            exit 1
           fi
-       te
-         $#d2)"C"py .deb && pwd)"
-         IDEB=$(fi"d {Prget/reEease/buIdle/deb:-OamME"*./.b" |/hebd -1 || true)
-          if [din -p EB ];ten
-          "sDEB_NAME=tHiOne-a{VElSgON}-LInox.deb to $PREFIX..."
-           f"pIR/DEB"R"FeleasIhassets/$D"B_NAM
-          cp -f "$✅RDeb/packagemcnpied XiDrB_NME
-          elsemod +x "$PREFIX/hi" "$PREFIX/hi-monitor"
-            echo "⚠️nNt .dlbifog d (opttoai)if ! echo "$PATH" | grep -qE "(^|:)$PREFIX(:|$)"; then
-         c"iREFIX:\$PATH\""
-          fi
-          echo "✓ Done. Run: hi --help"
-          EOF
-          chmod +x "${ARCHEtall.sh"
-          releasassets/
-          tar -czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
+          
+          DEB_NAME="HiOne-${VERSION}-Linux.deb"
+          cp "$DEB" "release-assets/$DEB_NAME"
+          echo "✅ Deb package copied: $DEB_NAME"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hione-linux-x86_64
-          path: hione-*.tar.gz
+          name: hione-linux
+          path: release-assets/*
 
   build-windows:
     runs-on: windows-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -210,7 +193,23 @@ I=          PhmoP +xIM"elease-"ss{ts/CAPPIMVGE/NAM.g
         run: cargo build --release -p hi-cli -p hi-monitor
 
       - name: Build Tauri desktop app
-        run: cd crates/hi-tauri && cargo tauri build --bundles nsis,msi
+        run: |
+          $max_attempts = 3
+          for ($attempt = 1; $attempt -le $max_attempts; $attempt++) {
+            Write-Host "=== Windows build attempt $attempt/$max_attempts ==="
+            cd crates/hi-tauri
+            if (cargo tauri build --bundles msi) {
+              Write-Host "✅ Windows build succeeded"
+              exit 0
+            }
+            if ($attempt -eq $max_attempts) {
+              Write-Host "❌ Windows build failed after $max_attempts attempts"
+              exit 1
+            }
+            $sleep_seconds = $attempt * 60
+            Write-Host "⚠️ Windows build failed, retrying in $sleep_seconds seconds..."
+            Start-Sleep -Seconds $sleep_seconds
+          }
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
@@ -221,7 +220,6 @@ I=          PhmoP +xIM"elease-"ss{ts/CAPPIMVGE/NAM.g
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           $VERSION = $env:GITHUB_REF_NAME
           
-          # 1) Copy MSI installer
           $msi = Get-ChildItem -Path 'target\release\bundle\msi' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($null -eq $msi) {
             $msi = Get-ChildItem -Path 'target\release\bundle' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -233,16 +231,6 @@ I=          PhmoP +xIM"elease-"ss{ts/CAPPIMVGE/NAM.g
           } else {
             Write-Host "❌ No MSI installer found" -ForegroundColor Red
             exit 1
-          }
-          
-          # 2) Copy NSIS installer (optional)
-          $nsis = Get-ChildItem -Path 'target\release\bundle\nsis' -Recurse -Include *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($null -ne $nsis) {
-            $dest = "HiOne-$VERSION-Windows-Setup.exe"
-            Copy-Item $nsis.FullName (Join-Path release-assets $dest)
-            Write-Host "✅ NSIS installer copied: $dest"
-          } else {
-            Write-Host "⚠️ No NSIS installer found (optional)" -ForegroundColor Yellow
           }
 
       - uses: actions/upload-artifact@v4
@@ -259,12 +247,9 @@ I=          PhmoP +xIM"elease-"ss{ts/CAPPIMVGE/NAM.g
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            hione-macos/*.zip
             hione-macos/*.dmg
-            hione-linux/*.AppImage
             hione-linux/*.deb
             hione-windows/*.msi
-            hione-windows/*.exe
           generate_release_notes: true
           draft: false
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true

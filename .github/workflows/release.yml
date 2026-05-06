@@ -8,24 +8,26 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   build-macos:
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            arch: arm64
-          - os: macos-13
-            arch: x86_64
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-14
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Add macOS targets
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.os }}
+          key: macos-universal
 
       - uses: actions/setup-node@v4
         with:
@@ -39,26 +41,49 @@ jobs:
       - name: Build frontend
         run: cd crates/hi-tauri && npm ci && npm run build
 
-      - name: Build CLI binaries
-        run: cargo build --release -p hi-cli -p hi-monitor
+      - name: Build CLI binaries (universal)
+        run: |
+          cargo build --release -p hi-cli -p hi-monitor --target aarch64-apple-darwin
+          cargo build --release -p hi-cli -p hi-monitor --target x86_64-apple-darwin
+          mkdir -p target/release
+          lipo -create -output target/release/hi \
+            target/aarch64-apple-darwin/release/hi \
+            target/x86_64-apple-darwin/release/hi
+          lipo -create -output target/release/hi-monitor \
+            target/aarch64-apple-darwin/release/hi-monitor \
+            target/x86_64-apple-darwin/release/hi-monitor
 
-      - name: Build Tauri desktop app
-        run: cd crates/hi-tauri && cargo tauri build
+      - name: Build Tauri desktop app (universal)
+        run: |
+          max_attempts=3
+          for attempt in $(seq 1 $max_attempts); do
+            echo "=== macOS build attempt ${attempt}/${max_attempts} ==="
+            if cd crates/hi-tauri && cargo tauri build --target universal-apple-darwin; then
+              echo "✅ macOS build succeeded"
+              exit 0
+            fi
+            if [ "$attempt" -eq $max_attempts ]; then
+              echo "❌ macOS build failed after ${max_attempts} attempts" >&2
+              exit 1
+            fi
+            sleep_seconds=$((attempt * 60))
+            echo "⚠️ macOS build failed, retrying in ${sleep_seconds}s..."
+            sleep $sleep_seconds
+          done
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
       - name: Package release archive
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          ARCH="${{ matrix.arch }}"
-          ARCHIVE="hione-${VERSION}-macos-${ARCH}"
+          ARCHIVE="hione-${VERSION}-macos-universal"
           mkdir -p "${ARCHIVE}"
           
           cp target/release/hi "${ARCHIVE}/"
           cp target/release/hi-monitor "${ARCHIVE}/"
           chmod +x "${ARCHIVE}/hi" "${ARCHIVE}/hi-monitor"
           
-          APP_PATH=$(find target/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
+          APP_PATH=$(find target/universal-apple-darwin/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
           cp -r "${APP_PATH}" "${ARCHIVE}/HiOne.app"
           
           cat > "${ARCHIVE}/install.sh" << 'EOF'
@@ -84,7 +109,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hione-macos-${{ matrix.arch }}
+          name: hione-macos-universal
           path: hione-*.tar.gz
 
   build-linux:
@@ -248,8 +273,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            hione-macos-arm64/*.tar.gz
-            hione-macos-x86_64/*.tar.gz
+            hione-macos-universal/*.tar.gz
             hione-linux-x86_64/*.tar.gz
             hione-windows-x86_64/*.zip
           generate_release_notes: true

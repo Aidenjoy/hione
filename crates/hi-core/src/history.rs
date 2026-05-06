@@ -329,32 +329,77 @@ fn read_gemini_history(cwd: &Path) -> Option<String> {
     }
 }
 
-fn read_qwen_history(_cwd: &Path) -> Option<String> {
+fn encode_cwd_for_qwen(cwd: &Path) -> Option<String> {
+    let abs = cwd.canonicalize().ok()?;
+    let path_str = strip_unc_prefix(&abs);
+    // Qwen encoding: F:\test -> f--test
+    // Lowercase, replace : and \ and / all with -
+    Some(path_str
+        .replace(':', "-")
+        .replace('\\', "-")
+        .replace('/', "-")
+        .to_lowercase())
+}
+
+fn read_qwen_history(cwd: &Path) -> Option<String> {
     let home = home_dir()?;
-    let tmp_dir = home.join(".qwen").join("tmp");
-    if !tmp_dir.exists() {
+    let encoded = encode_cwd_for_qwen(cwd)?;
+    let chats_dir = env_path("QWEN_PROJECTS_ROOT")
+        .unwrap_or_else(|| home.join(".qwen").join("projects").join(&encoded).join("chats"));
+
+    if !chats_dir.exists() {
         return None;
     }
 
-    let latest_dir = fs::read_dir(&tmp_dir)
+    // Find the latest .jsonl file in chats directory
+    let jsonl_files: Vec<_> = fs::read_dir(&chats_dir)
         .ok()?
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir() && e.path().join("logs.json").exists())
+        .filter(|e| {
+            let path = e.path();
+            path.is_file() && path.extension().map(|ext| ext == "jsonl").unwrap_or(false)
+        })
+        .collect();
+
+    let latest_file = jsonl_files
+        .into_iter()
         .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())?;
 
-    let logs_path = latest_dir.path().join("logs.json");
-    let content = fs::read_to_string(&logs_path).ok()?;
-    let entries: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let arr = entries.as_array()?;
+    let content = fs::read_to_string(latest_file.path()).ok()?;
 
-    let texts: Vec<String> = arr
-        .iter()
-        .filter_map(|e| {
-            let t = e.get("type")?.as_str()?;
-            if t == "user" {
+    // Parse JSONL - each line is a JSON object
+    let texts: Vec<String> = content
+        .lines()
+        .filter_map(|line| {
+            let entry: serde_json::Value = serde_json::from_str(line).ok()?;
+
+            // Only process assistant messages
+            if entry.get("type")?.as_str()? != "assistant" {
                 return None;
             }
-            e.get("message")?.as_str().map(|s| s.to_string())
+
+            // Get message object with parts array
+            let message = entry.get("message")?;
+            let parts = message.get("parts")?.as_array()?;
+
+            // Extract text from parts, skip thought entries
+            let msg_text = parts
+                .iter()
+                .filter_map(|p| {
+                    // Skip thought entries (they have "thought": true)
+                    if p.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) {
+                        return None;
+                    }
+                    p.get("text")?.as_str().map(|s| s.to_string())
+                })
+                .collect::<Vec<String>>()
+                .join("");
+
+            if msg_text.is_empty() {
+                None
+            } else {
+                Some(msg_text)
+            }
         })
         .collect();
 
@@ -517,6 +562,11 @@ mod tests {
         // Use the current directory which should exist
         let cwd = std::env::current_dir().unwrap();
         let encoded = encode_cwd_for_claude(&cwd).unwrap();
+        // On Windows: F:\path -> F:-path (no leading dash)
+        // On Unix: /path -> -path (leading dash)
+        #[cfg(windows)]
+        assert!(encoded.contains("-"));
+        #[cfg(not(windows))]
         assert!(encoded.starts_with("-"));
     }
 
@@ -568,5 +618,73 @@ mod tests {
         assert_eq!(texts.len(), 2);
         assert_eq!(texts[0], "Hello there!");
         assert_eq!(texts[1], "Final answer");
+    }
+
+    #[test]
+    fn test_qwen_jsonl_parsing() {
+        // Test qwen JSONL format with thought and text parts
+        let jsonl = r#"{"type":"user","message":{"role":"user","parts":[{"text":"hello"}]}}
+{"type":"assistant","message":{"role":"model","parts":[{"text":"Thinking...","thought":true},{"text":"13\n\nTask DONE: abc123"}]}}
+{"type":"system","message":{"role":"system"}}
+"#;
+        let texts: Vec<String> = jsonl
+            .lines()
+            .filter_map(|line| {
+                let entry: serde_json::Value = serde_json::from_str(line).ok()?;
+
+                // Only process assistant messages
+                if entry.get("type")?.as_str()? != "assistant" {
+                    return None;
+                }
+
+                // Get message object with parts array
+                let message = entry.get("message")?;
+                let parts = message.get("parts")?.as_array()?;
+
+                // Extract text from parts, skip thought entries
+                let msg_text = parts
+                    .iter()
+                    .filter_map(|p| {
+                        // Skip thought entries (they have "thought": true)
+                        if p.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) {
+                            return None;
+                        }
+                        p.get("text")?.as_str().map(|s| s.to_string())
+                    })
+                    .collect::<Vec<String>>()
+                    .join("");
+
+                if msg_text.is_empty() {
+                    None
+                } else {
+                    Some(msg_text)
+                }
+            })
+            .collect();
+
+        assert_eq!(texts.len(), 1);
+        assert!(texts[0].contains("Task DONE: abc123"));
+        assert!(texts[0].contains("13"));
+    }
+
+    #[test]
+    fn test_encode_cwd_for_qwen() {
+        // Test qwen cwd encoding: F:\test -> f--test
+        #[cfg(windows)]
+        {
+            let path = std::path::Path::new("F:\\test");
+            let abs = path.canonicalize().ok();
+            if let Some(p) = abs {
+                let path_str = strip_unc_prefix(&p);
+                let encoded = path_str
+                    .replace(':', "-")
+                    .replace('\\', "-")
+                    .replace('/', "-")
+                    .to_lowercase();
+                // Should be something like f--test (or longer if canonicalize adds more path)
+                assert!(encoded.starts_with("f-"));
+                assert!(encoded.contains("test"));
+            }
+        }
     }
 }

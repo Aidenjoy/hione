@@ -247,7 +247,9 @@ Custom tools can be configured in `.hione/tools.toml` with `auto_flags` and `res
 
 
 
+
+
 <!-- hi-collaboration-start -->
 ## Hi Multi-Agent Collaboration
-@.hione/CONTEXT.md
+@.hione\CONTEXT.md
 <!-- hi-collaboration-end -->

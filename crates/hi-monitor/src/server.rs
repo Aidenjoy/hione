@@ -30,8 +30,8 @@ pub struct MonitorState {
     pub pull_cooldown: Arc<RwLock<HashMap<Uuid, Instant>>>,
     /// 每个窗口最后一次收到任务的时刻，用于 stuck 检测过滤旧内容
     pub task_dispatch_times: Arc<RwLock<HashMap<String, Instant>>>,
-    /// 每个窗口任务派发时刻的结构化存储快照，用于检测新回复
-    pub response_baselines: Arc<RwLock<HashMap<String, String>>>,
+    /// 每个任务派发时刻的结构化存储快照，用于检测新回复（key: task_id）
+    pub response_baselines: Arc<RwLock<HashMap<Uuid, String>>>,
 }
 
 impl MonitorState {
@@ -195,7 +195,7 @@ where
                         .response_baselines
                         .write()
                         .await
-                        .insert(msg.receiver.clone(), baseline);
+                        .insert(msg.id, baseline);
                 }
             } else {
                 tracing::warn!(

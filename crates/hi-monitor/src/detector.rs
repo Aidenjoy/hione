@@ -158,7 +158,7 @@ async fn detect_task_done_structured(state: MonitorState) {
                 continue;
             }
 
-            let baseline = baselines.get(receiver).cloned().unwrap_or_default();
+            let baseline = baselines.get(task_id).cloned().unwrap_or_default();
 
             let current = match read_latest_response(receiver, &work_dir).await {
                 None => continue,                     // 结构化存储暂无数据，等待
@@ -226,12 +226,12 @@ async fn detect_task_done_structured(state: MonitorState) {
                 let mut queues = state.queues.write().await;
                 queues.pop_next(receiver);
                 drop(queues);
-                // 更新基线，为下一个任务做准备
+                // 清理已完成任务的 baseline，避免内存泄漏
                 state
                     .response_baselines
                     .write()
                     .await
-                    .insert(receiver.clone(), current);
+                    .remove(task_id);
             }
         }
     }

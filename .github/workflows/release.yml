@@ -73,38 +73,44 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
-      - name: Package release archive
+      - name: Package aclease erlhivrive
         run: |
-          VERSION="${GITHUB_REF_NAME}"
-          ARCHIVE="hione-${VERSION}-macos-universal"
-          mkdir -p "${ARCHIVE}"
+          VERSION="${GITHUB_REF_NAME}"REF_NAME}"
+          ARCHIVE="hHoni{${VERSION}-mVcoE-univSrOal"N}-macos-universal"
+          mkdir -p  "$AECHIV}
           
-          cp target/release/hi "${ARCHIVE}/"
-          cp target/release/hi-monitor "${ARCHIVE}/"
-          chmod +x "${ARCHIVE}/hi" "${ARCHIVE}/hi-monitor"
-          
-          APP_PATH=$(find target/universal-apple-darwin/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
-          cp -r "${APP_PATH}" "${ARCHIVE}/HiOne.app"
-          
-          cat > "${ARCHIVE}/install.sh" << 'EOF'
-          #!/usr/bin/env bash
+          cpse/hi "$Ie}e"s/hi "${ARCHIVE}/"
+          cp tgethi-moitor "${ARCHIVE}"
+          hmd+x${ARCHIVE}/hi"${ARCHIVE}/hionior"
+      
+          APPtarget/release/hi-monitor "${ARCHIVE}/"app
+          cp r{}"${ARCHIVE}/HiOe.app"
+          rsal-apple-darwin/release/bundle/macos -name "*.app" -maxdepth 1 | head -1)
+          catc>p"${ARCHIVE}/rns all.sh""<< 'EOF'{APP_PATH}" "${ARCHIVE}/HiOne.app"
+          #!/usr/bn/env bash
           set -euo pipefail
-          DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-          PREFIX="${PREFIX:-$HOME/.local/bin}"
-          mkdir -p "$PREFIX"
-          echo "Installing HiOne.app to /Applications..."
-          cp -rf "$DIR/HiOne.app" /Applications/HiOne.app
-          echo "Installing CLI tools to $PREFIX..."
-          cp -f "$DIR/hi" "$PREFIX/hi"
-          cp -f "$DIR/hi-monitor" "$PREFIX/hi-monitor"
-          chmod +x "$PREFIX/hi" "$PREFIX/hi-monitor"
-          if ! echo "$PATH" | grep -qE "(^|:)$PREFIX(:|$)"; then
-            echo "⚠️  Add to PATH: export PATH=\"$PREFIX:\$PATH\""
+        !sDIR="$(cd "$(di/nim/e"${BASH_SOURCE[0]}")"a&&wd"
+          tRoFIX plPEFX:$HME/local/bn}
+          mkDI$H_C)" &RFIX
+          PREFIXInst{llXng-HiOnO.Mpp Eoo/npplications...
+          cp -rf "$DIR/HiOne.app" /Applications/HiOne.appmkdir -p "$PREFIX"
+          echoc"Installing "LI tIolstton$PREFIX..."e.app to /Applications..."
+          cp ff"$DIIR/hi" "$iREFIX/hi.
+a"        cp -f "$DIR/hi-moni or" "$PREFIX//i-mopitor"plications/HiOne.app
+          chmode+xclLPRtFIX/hi" "$PoEFlX/hio onitor.."
+          ifc!pe hof "/hi" "| gPRp hqE "(^|:)PRFIX(:|$); then
+          cp -f "$⚠️ImAodttr PATHPRexport PiTH=\"$PRmFIX:\$PATH\o"nitor"
+          fid +x "$PREFIX/hi" "$PREFIX/hi-monitor"
+           ! ech✓"DPneT|Rre: h" --help"
+          EOF
+          chm(d +x "${ARCHIVE}/i^st|:l.sh$PREFIX(:|$)"; then
+          
+          tar -cz  "${ARCHIVE}.tar.gz" "${ARCHIVE}"echo "⚠️  Add to PATH: export PATH=\"$PREFIX:\$PATH\""
           fi
           echo "✓ Done. Run: hi --help"
           EOF
-          chmod +x "${ARCHIVE}/install.sh"
-          
+          chmod +x "${ARCHI-universalVE}/install.sh"
+          hion.tar.gz
           tar -czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
 
       - uses: actions/upload-artifact@v4
@@ -140,46 +146,38 @@ jobs:
 
       - name: Build CLI binaries
         run: cargo build --release -p hi-cli -p hi-monitor
-
+prLnux Assts
       - name: Build Tauri desktop app
-        run: cd crates/hi-tauri && cargo tauri build --bundles appimage,deb
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ""
-
-      - name: Package release archive
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
-          ARCHIVE="hione-${VERSION}-linux-x86_64"
-          mkdir -p "${ARCHIVE}"
+ru        sete-euxonppfai
+          TAURI_Se:e rease-lseats
+      ru VERSION=GITHUB_REF_NM
           
-          cp target/release/hi "${ARCHIVE}/"
-          cp target/release/hi-monitor "${ARCHIVE}/"
-          chmod +x "${ARCHIVE}/hi" "${ARCHIVE}/hi-monitor"
-          
-          APPIMAGE=$(find target/release/bundle/appimage -name "*.AppImage" | head -1)
-          cp "${APPIMAGE}" "${ARCHIVE}/HiOne.AppImage"
-          chmod +x "${ARCHIVE}/HiOne.AppImage"
-          
-          cat > "${ARCHIVE}/install.sh" << 'EOF'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-          PREFIX="${PREFIX:-$HOME/.local/bin}"
-          mkdir -p "$PREFIX"
-          echo "Installing CLI tools to $PREFIX..."
-          cp -f "$DIR/hi" "$PREFIX/hi"
-          cp -f "$DIR/hi-monitor" "$PREFIX/hi-monitor"
-          chmod +x "$PREFIX/hi" "$PREFIX/hi-monitor"
-          echo "Installing HiOne desktop app..."
-          cp -f "$DIR/HiOne.AppImage" "$PREFIX/hi-tauri"
-          chmod +x "$PREFIX/hi-tauri"
-          if ! echo "$PATH" | grep -qE "(^|:)$PREFIX(:|$)"; then
-            echo "⚠️  Add to PATH: export PATH=\"$PREFIX:\$PATH\""
+O"M       # 1) Copy AppImageARCHIVE="hione-${VERSION}-linux-x86_64"
+          mkdir -p "${ARCHIVE}" || true
+          if [ -n ];the
+          rtAPPIMAGE_NAME=/HiOne-reVEeSeONi-L$AuxCHIVE}/"
+            cp +x"PPRMAGHA "relea-APPs/$APPIMAGE_NAME"
+I=          PhmoP +xIM"elease-"ss{ts/CAPPIMVGE/NAM.g
+  e        echo "✅ Appdmage copied:  AP$IMAGA_NAHi"
+          else
+          cat > ❌ No App"mREesf"und" >&2
+          /rexvtb1
+          fi
+       te
+         $#d2)"C"py .deb && pwd)"
+         IDEB=$(fi"d {Prget/reEease/buIdle/deb:-OamME"*./.b" |/hebd -1 || true)
+          if [din -p EB ];ten
+          "sDEB_NAME=tHiOne-a{VElSgON}-LInox.deb to $PREFIX..."
+           f"pIR/DEB"R"FeleasIhassets/$D"B_NAM
+          cp -f "$✅RDeb/packagemcnpied XiDrB_NME
+          elsemod +x "$PREFIX/hi" "$PREFIX/hi-monitor"
+            echo "⚠️nNt .dlbifog d (opttoai)if ! echo "$PATH" | grep -qE "(^|:)$PREFIX(:|$)"; then
+         c"iREFIX:\$PATH\""
           fi
           echo "✓ Done. Run: hi --help"
           EOF
-          chmod +x "${ARCHIVE}/install.sh"
-          
+          chmod +x "${ARCHEtall.sh"
+          releasassets/
           tar -czf "${ARCHIVE}.tar.gz" "${ARCHIVE}"
 
       - uses: actions/upload-artifact@v4
@@ -216,53 +214,41 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
 
-      - name: Package release archive
+      - name: Prepare Windows Assets
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           $VERSION = $env:GITHUB_REF_NAME
-          $ARCHIVE = "hione-$VERSION-windows-x86_64"
-          New-Item -ItemType Directory -Path $ARCHIVE | Out-Null
-
-          Copy-Item "target\release\hi.exe" "$ARCHIVE\"
-          Copy-Item "target\release\hi-monitor.exe" "$ARCHIVE\"
-
-          $Nsis = Get-ChildItem "target\release\bundle\nsis" -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          $Msi  = Get-ChildItem "target\release\bundle\msi"  -Filter "*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($Nsis) { Copy-Item $Nsis.FullName "$ARCHIVE\HiOne-Setup.exe" }
-          if ($Msi)  { Copy-Item $Msi.FullName  "$ARCHIVE\HiOne-Setup.msi" }
-
-          $installScript = @'
-          #Requires -Version 5.1
-          param([string]$Prefix = "")
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = "Stop"
-          $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-          if (-not $Prefix) { $Prefix = Join-Path $env:LOCALAPPDATA "hione\bin" }
-          New-Item -ItemType Directory -Path $Prefix -Force | Out-Null
-
-          Write-Host "Installing CLI tools to $Prefix..."
-          Copy-Item "$ScriptDir\hi.exe" "$Prefix\hi.exe" -Force
-          Copy-Item "$ScriptDir\hi-monitor.exe" "$Prefix\hi-monitor.exe" -Force
-
-          Write-Host "Running HiOne desktop installer..."
-          $setup = Get-ChildItem $ScriptDir -Filter "HiOne-Setup.*" | Select-Object -First 1
-          if ($setup) { Start-Process $setup.FullName -Wait }
-
-          $currentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-          if ($currentPath -notlike "*$Prefix*") {
-              [Environment]::SetEnvironmentVariable("PATH", "$Prefix;$currentPath", "User")
-              Write-Host "Added $Prefix to User PATH (restart terminal to take effect)"
+          
+          # 1) Copy MSI installer
+          $msi = Get-ChildItem -Path 'target\release\bundle\msi' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $msi) {
+            $msi = Get-ChildItem -Path 'target\release\bundle' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
           }
-          Write-Host "Done. Run: hi --help"
-          '@
-          $installScript | Set-Content "$ARCHIVE\install.ps1" -Encoding UTF8
-
-          Compress-Archive -Path $ARCHIVE -DestinationPath "$ARCHIVE.zip"
+          if ($null -ne $msi) {
+            $dest = "HiOne-$VERSION-Windows.msi"
+            Copy-Item $msi.FullName (Join-Path release-assets $dest)
+            Write-Host "✅ MSI installer copied: $dest"
+          } else {
+            Write-Host "❌ No MSI installer found" -ForegroundColor Red
+            exit 1
+          }
+          
+          # 2) Copy NSIS installer (optional)
+          $nsis = Get-ChildItem -Path 'target\release\bundle\nsis' -Recurse -Include *.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -ne $nsis) {
+            $dest = "HiOne-$VERSION-Windows-Setup.exe"
+            Copy-Item $nsis.FullName (Join-Path release-assets $dest)
+            Write-Host "✅ NSIS installer copied: $dest"
+          } else {
+            Write-Host "⚠️ No NSIS installer found (optional)" -ForegroundColor Yellow
+          }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: hione-windows-x86_64
-          path: hione-*.zip
+          name: hione-windows
+          path: release-assets/*
 
   release:
     needs: [build-macos, build-linux, build-windows]
@@ -273,9 +259,12 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            hione-macos-universal/*.tar.gz
-            hione-linux-x86_64/*.tar.gz
-            hione-windows-x86_64/*.zip
+            hione-macos/*.zip
+            hione-macos/*.dmg
+            hione-linux/*.AppImage
+            hione-linux/*.deb
+            hione-windows/*.msi
+            hione-windows/*.exe
           generate_release_notes: true
           draft: false
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false

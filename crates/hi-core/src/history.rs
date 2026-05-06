@@ -22,6 +22,22 @@ fn env_path(name: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+#[cfg(windows)]
+fn strip_unc_prefix(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    // Windows canonicalize() prepends \\?\, strip it to match tool storage paths
+    if s.starts_with(r"\\?\") {
+        s[4..].to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+#[cfg(not(windows))]
+fn strip_unc_prefix(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
 pub fn supported_tool_name(tool: &str) -> Option<&'static str> {
     let tool_lower = tool.to_lowercase();
     let stripped = tool_lower.trim_end_matches(|c: char| c.is_ascii_digit());
@@ -64,7 +80,7 @@ pub async fn read_latest_response(tool: &str, cwd: &Path) -> Option<String> {
 
 fn encode_cwd_for_claude(cwd: &Path) -> Option<String> {
     let abs = cwd.canonicalize().ok()?;
-    let path_str = abs.to_string_lossy();
+    let path_str = strip_unc_prefix(&abs);
     // Unix: /path/to/project -> -path-to-project
     // Windows: C:\path\to\project -> -C:-path-to-project
     // Replace both path separators with dash
@@ -185,7 +201,7 @@ fn read_codex_history(cwd: &Path) -> Option<String> {
         return None;
     }
 
-    let cwd_str = cwd.canonicalize().ok()?.to_string_lossy().to_string();
+    let cwd_str = strip_unc_prefix(&cwd.canonicalize().ok()?);
 
     let latest_file = find_latest_codex_session_file(&sessions_dir)?;
     let content = fs::read_to_string(&latest_file).ok()?;
@@ -254,7 +270,7 @@ fn read_gemini_history(cwd: &Path) -> Option<String> {
         return None;
     }
 
-    let cwd_str = cwd.canonicalize().ok()?.to_string_lossy().to_string();
+    let cwd_str = strip_unc_prefix(&cwd.canonicalize().ok()?);
 
     // 通过 .project_root 文件内容定位项目目录
     let project_dir = fs::read_dir(&tmp_dir)
@@ -356,7 +372,7 @@ async fn read_opencode_history(cwd: &Path) -> Option<String> {
         return None;
     }
 
-    let cwd_str = cwd.canonicalize().ok()?.to_string_lossy().to_string();
+    let cwd_str = strip_unc_prefix(&cwd.canonicalize().ok()?);
 
     // 使用 sqlite:// 前缀并开启只读模式
     let db_url = format!("sqlite://{}?mode=ro", db_path.display());

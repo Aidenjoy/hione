@@ -58,7 +58,7 @@ jobs:
           max_attempts=3
           for attempt in $(seq 1 $max_attempts); do
             echo "=== macOS build attempt ${attempt}/${max_attempts} ==="
-            if cd crates/hi-tauri && cargo tauri build --target universal-apple-darwin; then
+            if cd crates/hi-tauri && cargo tauri build --target universal-apple-darwin --bundles app,dmg; then
               echo "✅ macOS build succeeded"
               exit 0
             fi
@@ -79,10 +79,12 @@ jobs:
           mkdir -p release-assets
           VERSION="${GITHUB_REF_NAME}"
           
-          DMG_PATH=$(find target/universal-apple-darwin/release/bundle/macos -name "*.dmg" -maxdepth 1 | head -1 || true)
+          DMG_PATH=$(find target/universal-apple-darwin/release/bundle -name "*.dmg" | head -1 || true)
           
           if [ -z "$DMG_PATH" ]; then
-            echo "❌ No .dmg found" >&2
+            echo "❌ No .dmg found in target/universal-apple-darwin/release/bundle" >&2
+            echo "Listing all bundle files:" >&2
+            find target/universal-apple-darwin/release/bundle -type f || true
             exit 1
           fi
           

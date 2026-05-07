@@ -64,7 +64,10 @@ jobs:
           max_attempts=3
           for attempt in $(seq 1 "$max_attempts"); do
             echo "=== macOS build attempt ${attempt}/${max_attempts} ==="
-            if cd crates/hi-tauri && cargo tauri build --target universal-apple-darwin; then
+            # Override beforeBuildCommand to empty: frontend and universal CLI binaries
+            # are already built above; letting Tauri re-run it would overwrite the
+            # universal binaries with ARM64-only native ones (bad CPU type on x86 Macs).
+            if cd crates/hi-tauri && cargo tauri build --target universal-apple-darwin --config '{"build":{"beforeBuildCommand":""}}'; then
               echo "✅ macOS build succeeded"
               exit 0
             fi
@@ -84,7 +87,7 @@ jobs:
           set -euxo pipefail
           mkdir -p release-assets
           VERSION="${GITHUB_REF_NAME}"
-          
+
           APP_PATH=""
           for path in \
             "target/universal-apple-darwin/release/bundle/macos" \
@@ -95,18 +98,28 @@ jobs:
               [ -z "$APP_PATH" ] && APP_PATH=$(find "$path" -maxdepth 1 -name "*.app" -type d | head -1 || true)
             fi
           done
-          
+
           if [ -z "$APP_PATH" ]; then
             echo "❌ No .app found" >&2
             echo "Listing all bundle directories:" >&2
             find target -type d -name "bundle" || true
             exit 1
           fi
-          
+
           echo "✅ Found .app: $APP_PATH"
-          
+
+          # Create a staging dir with the .app + /Applications symlink so users
+          # see the "drag to Applications" shortcut when they open the DMG.
+          DMG_STAGE="$RUNNER_TEMP/dmg-stage"
+          rm -rf "$DMG_STAGE"
+          mkdir -p "$DMG_STAGE"
+          APP_NAME=$(basename "$APP_PATH")
+          cp -R "$APP_PATH" "$DMG_STAGE/$APP_NAME"
+          ln -s /Applications "$DMG_STAGE/Applications"
+
           DMG_NAME="HiOne-${VERSION}-macOS.dmg"
-          hdiutil create -volname "HiOne" -srcfolder "$APP_PATH" -ov -format UDZO "release-assets/$DMG_NAME"
+          hdiutil create -volname "HiOne" -srcfolder "$DMG_STAGE" -ov -format UDZO "release-assets/$DMG_NAME"
+          rm -rf "$DMG_STAGE"
           echo "✅ macOS dmg created: $DMG_NAME"
 
       - uses: actions/upload-artifact@v4

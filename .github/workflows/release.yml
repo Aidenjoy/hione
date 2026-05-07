@@ -45,13 +45,18 @@ jobs:
         run: |
           cargo build --release -p hi-cli -p hi-monitor --target aarch64-apple-darwin
           cargo build --release -p hi-cli -p hi-monitor --target x86_64-apple-darwin
-          mkdir -p target/release
-          lipo -create -output target/release/hi \
+          
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create -output target/universal-apple-darwin/release/hi \
             target/aarch64-apple-darwin/release/hi \
             target/x86_64-apple-darwin/release/hi
-          lipo -create -output target/release/hi-monitor \
+          lipo -create -output target/universal-apple-darwin/release/hi-monitor \
             target/aarch64-apple-darwin/release/hi-monitor \
             target/x86_64-apple-darwin/release/hi-monitor
+          
+          mkdir -p target/release
+          cp target/universal-apple-darwin/release/hi target/release/hi
+          cp target/universal-apple-darwin/release/hi-monitor target/release/hi-monitor
 
       - name: Build Tauri desktop app (universal)
         run: |

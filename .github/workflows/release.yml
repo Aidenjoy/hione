@@ -60,20 +60,21 @@ jobs:
 
       - name: Build Tauri desktop app (universal)
         run: |
+          set -euo pipefail
           max_attempts=3
-          for attempt in $(seq 1 $max_attempts); do
+          for attempt in $(seq 1 "$max_attempts"); do
             echo "=== macOS build attempt ${attempt}/${max_attempts} ==="
-            if cd crates/hi-tauri && cargo tauri build --target universal-apple-darwin --bundles app,dmg; then
+            if cd crates/hi-tauri && cargo tauri build --target universal-apple-darwin; then
               echo "✅ macOS build succeeded"
               exit 0
             fi
-            if [ "$attempt" -eq $max_attempts ]; then
+            if [ "$attempt" -eq "$max_attempts" ]; then
               echo "❌ macOS build failed after ${max_attempts} attempts" >&2
               exit 1
             fi
             sleep_seconds=$((attempt * 60))
             echo "⚠️ macOS build failed, retrying in ${sleep_seconds}s..."
-            sleep $sleep_seconds
+            sleep "$sleep_seconds"
           done
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
@@ -84,16 +85,29 @@ jobs:
           mkdir -p release-assets
           VERSION="${GITHUB_REF_NAME}"
           
-          DMG_PATH=$(find target/universal-apple-darwin/release/bundle/macos -name "*.dmg" -maxdepth 1 | head -1 || true)
+          APP_PATH=""
+          for path in \
+            "target/universal-apple-darwin/release/bundle/macos" \
+            "target/aarch64-apple-darwin/release/bundle/macos" \
+            "target/x86_64-apple-darwin/release/bundle/macos" \
+            "target/release/bundle/macos"; do
+            if [ -d "$path" ]; then
+              [ -z "$APP_PATH" ] && APP_PATH=$(find "$path" -maxdepth 1 -name "*.app" -type d | head -1 || true)
+            fi
+          done
           
-          if [ -z "$DMG_PATH" ]; then
-            echo "❌ No .dmg found" >&2
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ No .app found" >&2
+            echo "Listing all bundle directories:" >&2
+            find target -type d -name "bundle" || true
             exit 1
           fi
           
+          echo "✅ Found .app: $APP_PATH"
+          
           DMG_NAME="HiOne-${VERSION}-macOS.dmg"
-          cp "$DMG_PATH" "release-assets/$DMG_NAME"
-          echo "✅ macOS dmg copied: $DMG_NAME"
+          hdiutil create -volname "HiOne" -srcfolder "$APP_PATH" -ov -format UDZO "release-assets/$DMG_NAME"
+          echo "✅ macOS dmg created: $DMG_NAME"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -132,20 +146,21 @@ jobs:
 
       - name: Build Tauri desktop app
         run: |
+          set -euo pipefail
           max_attempts=3
-          for attempt in $(seq 1 $max_attempts); do
+          for attempt in $(seq 1 "$max_attempts"); do
             echo "=== Linux build attempt ${attempt}/${max_attempts} ==="
             if cd crates/hi-tauri && cargo tauri build --bundles deb; then
               echo "✅ Linux build succeeded"
               exit 0
             fi
-            if [ "$attempt" -eq $max_attempts ]; then
+            if [ "$attempt" -eq "$max_attempts" ]; then
               echo "❌ Linux build failed after ${max_attempts} attempts" >&2
               exit 1
             fi
             sleep_seconds=$((attempt * 60))
             echo "⚠️ Linux build failed, retrying in ${sleep_seconds}s..."
-            sleep $sleep_seconds
+            sleep "$sleep_seconds"
           done
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
@@ -156,12 +171,23 @@ jobs:
           mkdir -p release-assets
           VERSION="${GITHUB_REF_NAME}"
           
-          DEB=$(find target/release/bundle/deb -name "*.deb" | head -1 || true)
+          DEB=""
+          for path in \
+            "target/release/bundle/deb" \
+            "crates/hi-tauri/target/release/bundle/deb"; do
+            if [ -d "$path" ]; then
+              [ -z "$DEB" ] && DEB=$(find "$path" -name "*.deb" | head -1 || true)
+            fi
+          done
           
           if [ -z "$DEB" ]; then
             echo "❌ No .deb found" >&2
+            echo "Listing all bundle directories:" >&2
+            find target -type d -name "bundle" || true
             exit 1
           fi
+          
+          echo "✅ Found .deb: $DEB"
           
           DEB_NAME="HiOne-${VERSION}-Linux.deb"
           cp "$DEB" "release-assets/$DEB_NAME"
@@ -198,6 +224,7 @@ jobs:
         run: cargo build --release -p hi-cli -p hi-monitor
 
       - name: Build Tauri desktop app
+        shell: pwsh
         run: |
           $max_attempts = 3
           for ($attempt = 1; $attempt -le $max_attempts; $attempt++) {
@@ -225,16 +252,26 @@ jobs:
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           $VERSION = $env:GITHUB_REF_NAME
           
-          $msi = Get-ChildItem -Path 'target\release\bundle\msi' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($null -eq $msi) {
-            $msi = Get-ChildItem -Path 'target\release\bundle' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          $msi = $null
+          $paths = @(
+            'target\release\bundle\msi',
+            'crates\hi-tauri\target\release\bundle\msi'
+          )
+          foreach ($path in $paths) {
+            if (Test-Path $path) {
+              $msi = Get-ChildItem -Path $path -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($null -ne $msi) { break }
+            }
           }
+          
           if ($null -ne $msi) {
             $dest = "HiOne-$VERSION-Windows.msi"
             Copy-Item $msi.FullName (Join-Path release-assets $dest)
             Write-Host "✅ MSI installer copied: $dest"
           } else {
             Write-Host "❌ No MSI installer found" -ForegroundColor Red
+            Write-Host "Listing all bundle directories:"
+            Get-ChildItem -Path target -Recurse -Filter bundle -Directory -ErrorAction SilentlyContinue
             exit 1
           }
 
